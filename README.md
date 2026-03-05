@@ -1,6 +1,6 @@
 # vivid-sequencers
 
-`vivid-sequencers` is an extracted Vivid package that provides sequencing control operators:
+`vivid-sequencers` is a Vivid package library that provides sequencing control operators:
 
 - `sequencer`
 - `drum_sequencer`

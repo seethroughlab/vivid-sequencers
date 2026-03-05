@@ -1,7 +1,7 @@
 {
   "name": "vivid-sequencers",
   "version": "0.1.0",
-  "description": "Sequencing control operators extracted from vivid-core",
+  "description": "Sequencing control package library for Vivid",
   "build": "cmake",
   "operators": [
     "sequencer",
