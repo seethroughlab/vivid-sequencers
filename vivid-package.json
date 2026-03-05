@@ -1,0 +1,16 @@
+{
+  "name": "vivid-sequencers",
+  "version": "0.1.0",
+  "description": "Sequencing control operators extracted from vivid-core",
+  "build": "cmake",
+  "operators": [
+    "sequencer",
+    "drum_sequencer",
+    "pattern_seq",
+    "note_pattern",
+    "note_duration",
+    "arpeggiator",
+    "chord_progression",
+    "state_machine"
+  ]
+}
