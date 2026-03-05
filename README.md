@@ -11,6 +11,10 @@
 - `chord_progression`
 - `state_machine`
 
+## Preview
+
+![vivid-sequencers preview](docs/images/preview.png)
+
 ## Contents
 
 - `src/*.cpp` for the 8 operators
