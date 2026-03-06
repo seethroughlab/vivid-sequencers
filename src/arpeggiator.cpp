@@ -1,4 +1,5 @@
 #include "operator_api/operator.h"
+#include "arpeggiator_patterns.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -9,7 +10,7 @@ struct Arpeggiator : vivid::OperatorBase {
     static constexpr bool kTimeDependent = true;
 
     // --- Core parameters ---
-    vivid::Param<int>   mode        {"mode",        0, {"Up","Down","UpDown","DownUp","Random","Order","Converge","Diverge"}};
+    vivid::Param<int>   mode        {"mode",        0, {"Up","Down","UpDown","DownUp","Random","Order","Converge","Diverge","RandomNoRepeat","OrderDown"}};
     vivid::Param<int>   octaves     {"octaves",     1, 1, 4};
     vivid::Param<int>   rate        {"rate",        3, {"1/1","1/2","1/4","1/8","1/16","1/32","1/4T","1/8T","1/16T"}};
     vivid::Param<float> gate_length {"gate_length", 0.8f, 0.01f, 1.0f};
@@ -89,7 +90,7 @@ struct Arpeggiator : vivid::OperatorBase {
         bool latch_on = latch.bool_value();
         int msteps = mod_steps.int_value();
 
-        if (m < 0) m = 0; if (m > 7) m = 7;
+        if (m < 0) m = 0; if (m > 9) m = 9;
         if (oct < 1) oct = 1; if (oct > 4) oct = 4;
         if (r < 0) r = 0; if (r > 8) r = 8;
         if (msteps < 1) msteps = 1; if (msteps > 8) msteps = 8;
@@ -151,7 +152,7 @@ struct Arpeggiator : vivid::OperatorBase {
         int sorted_indices[16];
         for (int i = 0; i < input_count; ++i) sorted_indices[i] = i;
 
-        if (m != 5) {  // mode 5 = Order (preserve press order)
+        if (m != 5 && m != 9) {  // Order and OrderDown preserve input order
             // Simple insertion sort by note value
             for (int i = 1; i < input_count; ++i) {
                 int key = sorted_indices[i];
@@ -191,6 +192,10 @@ struct Arpeggiator : vivid::OperatorBase {
             float total_beats = static_cast<float>(beat_count_) + beat_phase;
             step_offset_ = static_cast<int>(std::floor(total_beats * kMultipliers[r]));
             arp_direction_ = 1;  // reset bounce direction
+            last_selected_step_ = -1;
+            last_selected_pool_ = -1;
+            last_selected_idx_ = 0;
+            last_random_idx_ = -1;
         }
         prev_had_notes_ = has_notes;
 
@@ -233,7 +238,15 @@ struct Arpeggiator : vivid::OperatorBase {
         step_phase = std::max(0.0f, std::min(1.0f, step_phase));
 
         // Determine which note in the pool to play based on mode
-        int note_idx = get_note_index(m, raw_step, pool_count);
+        int note_idx = 0;
+        if (raw_step != last_selected_step_ || pool_count != last_selected_pool_) {
+            note_idx = get_note_index(m, raw_step, pool_count);
+            last_selected_step_ = raw_step;
+            last_selected_pool_ = pool_count;
+            last_selected_idx_ = note_idx;
+        } else {
+            note_idx = last_selected_idx_;
+        }
 
         // Per-step modifier (polymetric: cycles independently through mod_steps)
         int mod_idx = raw_step % msteps;
@@ -369,6 +382,10 @@ private:
     int step_offset_ = 0;   // global step at last reset
     int arp_direction_ = 1;  // +1 or -1 for bounce modes
     bool prev_had_notes_ = false;
+    int last_selected_step_ = -1;
+    int last_selected_pool_ = -1;
+    int last_selected_idx_ = 0;
+    int last_random_idx_ = -1;
 
     // Latch state
     bool prev_any_gate_ = false;
@@ -391,66 +408,21 @@ private:
         if (pool_count <= 0) return 0;
 
         switch (mode) {
-            case 0: // Up
-                return raw_step % pool_count;
-
-            case 1: // Down
-                return (pool_count - 1) - (raw_step % pool_count);
-
-            case 2: { // UpDown (exclusive endpoints)
-                if (pool_count == 1) return 0;
-                int cycle = (pool_count - 1) * 2;
-                int pos = raw_step % cycle;
-                return (pos < pool_count) ? pos : (cycle - pos);
-            }
-
-            case 3: { // DownUp (exclusive endpoints)
-                if (pool_count == 1) return 0;
-                int cycle = (pool_count - 1) * 2;
-                int pos = raw_step % cycle;
-                int down_idx = (pool_count - 1) - pos;
-                int up_idx = pos - (pool_count - 1);
-                return (pos < pool_count) ? down_idx : up_idx;
-            }
-
             case 4: // Random
                 return static_cast<int>(rng_next() % static_cast<uint32_t>(pool_count));
 
-            case 5: // Order (press order preserved — pool already in input order)
-                return raw_step % pool_count;
-
-            case 6: { // Converge: alternate lowest/highest moving inward
-                if (pool_count == 1) return 0;
-                int cycle_pos = raw_step % pool_count;
-                int pair = cycle_pos / 2;
-                bool is_high = (cycle_pos % 2) != 0;
-                if (is_high) {
-                    return (pool_count - 1) - pair;
-                } else {
-                    return pair;
+            case 8: { // RandomNoRepeat
+                int idx = static_cast<int>(rng_next() % static_cast<uint32_t>(pool_count));
+                if (pool_count > 1 && idx == last_random_idx_) {
+                    int off = 1 + static_cast<int>(rng_next() % static_cast<uint32_t>(pool_count - 1));
+                    idx = (idx + off) % pool_count;
                 }
-            }
-
-            case 7: { // Diverge: start from middle, alternate outward
-                if (pool_count == 1) return 0;
-                int mid = pool_count / 2;
-                int cycle_pos = raw_step % pool_count;
-                int offset = (cycle_pos + 1) / 2;
-                bool go_down = (cycle_pos % 2) == 0;
-                int idx;
-                if (go_down) {
-                    idx = mid - offset;
-                } else {
-                    idx = mid + offset;
-                }
-                // Clamp
-                if (idx < 0) idx = 0;
-                if (idx >= pool_count) idx = pool_count - 1;
+                last_random_idx_ = idx;
                 return idx;
             }
 
             default:
-                return raw_step % pool_count;
+                return vivid_sequencers::arp_pattern_index(mode, raw_step, pool_count);
         }
     }
 

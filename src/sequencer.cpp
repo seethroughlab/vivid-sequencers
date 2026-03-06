@@ -1,6 +1,7 @@
 #include "operator_api/operator.h"
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 
 struct Sequencer : vivid::OperatorBase {
     static constexpr const char* kName   = "Sequencer";
@@ -24,17 +25,86 @@ struct Sequencer : vivid::OperatorBase {
     vivid::Param<float> val_13{"val_13", 0.0f, -10000.0f, 10000.0f};
     vivid::Param<float> val_14{"val_14", 0.0f, -10000.0f, 10000.0f};
     vivid::Param<float> val_15{"val_15", 0.0f, -10000.0f, 10000.0f};
+    vivid::Param<float> prob_0 {"prob_0",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_1 {"prob_1",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_2 {"prob_2",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_3 {"prob_3",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_4 {"prob_4",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_5 {"prob_5",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_6 {"prob_6",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_7 {"prob_7",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_8 {"prob_8",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_9 {"prob_9",  1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_10{"prob_10", 1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_11{"prob_11", 1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_12{"prob_12", 1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_13{"prob_13", 1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_14{"prob_14", 1.0f, 0.0f, 1.0f};
+    vivid::Param<float> prob_15{"prob_15", 1.0f, 0.0f, 1.0f};
+    vivid::Param<int>   ratchet_0 {"ratchet_0",  1, 1, 8};
+    vivid::Param<int>   ratchet_1 {"ratchet_1",  1, 1, 8};
+    vivid::Param<int>   ratchet_2 {"ratchet_2",  1, 1, 8};
+    vivid::Param<int>   ratchet_3 {"ratchet_3",  1, 1, 8};
+    vivid::Param<int>   ratchet_4 {"ratchet_4",  1, 1, 8};
+    vivid::Param<int>   ratchet_5 {"ratchet_5",  1, 1, 8};
+    vivid::Param<int>   ratchet_6 {"ratchet_6",  1, 1, 8};
+    vivid::Param<int>   ratchet_7 {"ratchet_7",  1, 1, 8};
+    vivid::Param<int>   ratchet_8 {"ratchet_8",  1, 1, 8};
+    vivid::Param<int>   ratchet_9 {"ratchet_9",  1, 1, 8};
+    vivid::Param<int>   ratchet_10{"ratchet_10", 1, 1, 8};
+    vivid::Param<int>   ratchet_11{"ratchet_11", 1, 1, 8};
+    vivid::Param<int>   ratchet_12{"ratchet_12", 1, 1, 8};
+    vivid::Param<int>   ratchet_13{"ratchet_13", 1, 1, 8};
+    vivid::Param<int>   ratchet_14{"ratchet_14", 1, 1, 8};
+    vivid::Param<int>   ratchet_15{"ratchet_15", 1, 1, 8};
+
+    Sequencer() {
+        vivid::semantic_tag(steps, "count");
+        vivid::semantic_shape(steps, "int");
+        vivid::semantic_intent(steps, "sequence_length");
+
+        for (auto* p : {&prob_0, &prob_1, &prob_2, &prob_3, &prob_4, &prob_5, &prob_6, &prob_7,
+                        &prob_8, &prob_9, &prob_10, &prob_11, &prob_12, &prob_13, &prob_14, &prob_15}) {
+            vivid::semantic_tag(*p, "probability_01");
+            vivid::semantic_shape(*p, "scalar");
+        }
+
+        for (auto* p : {&ratchet_0, &ratchet_1, &ratchet_2, &ratchet_3, &ratchet_4, &ratchet_5, &ratchet_6, &ratchet_7,
+                        &ratchet_8, &ratchet_9, &ratchet_10, &ratchet_11, &ratchet_12, &ratchet_13, &ratchet_14, &ratchet_15}) {
+            vivid::semantic_tag(*p, "count");
+            vivid::semantic_shape(*p, "int");
+            vivid::semantic_intent(*p, "ratchet_subdivisions");
+        }
+    }
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
-        out.push_back(&steps);                         // param 0
-        out.push_back(&val_0);  out.push_back(&val_1); // param 1..2
-        out.push_back(&val_2);  out.push_back(&val_3); // param 3..4
-        out.push_back(&val_4);  out.push_back(&val_5); // param 5..6
-        out.push_back(&val_6);  out.push_back(&val_7); // param 7..8
-        out.push_back(&val_8);  out.push_back(&val_9); // param 9..10
-        out.push_back(&val_10); out.push_back(&val_11); // param 11..12
-        out.push_back(&val_12); out.push_back(&val_13); // param 13..14
-        out.push_back(&val_14); out.push_back(&val_15); // param 15..16
+        out.push_back(&steps);                          // 0
+        out.push_back(&val_0);  out.push_back(&val_1); // 1..16
+        out.push_back(&val_2);  out.push_back(&val_3);
+        out.push_back(&val_4);  out.push_back(&val_5);
+        out.push_back(&val_6);  out.push_back(&val_7);
+        out.push_back(&val_8);  out.push_back(&val_9);
+        out.push_back(&val_10); out.push_back(&val_11);
+        out.push_back(&val_12); out.push_back(&val_13);
+        out.push_back(&val_14); out.push_back(&val_15);
+
+        out.push_back(&prob_0);  out.push_back(&prob_1); // 17..32
+        out.push_back(&prob_2);  out.push_back(&prob_3);
+        out.push_back(&prob_4);  out.push_back(&prob_5);
+        out.push_back(&prob_6);  out.push_back(&prob_7);
+        out.push_back(&prob_8);  out.push_back(&prob_9);
+        out.push_back(&prob_10); out.push_back(&prob_11);
+        out.push_back(&prob_12); out.push_back(&prob_13);
+        out.push_back(&prob_14); out.push_back(&prob_15);
+
+        out.push_back(&ratchet_0);  out.push_back(&ratchet_1); // 33..48
+        out.push_back(&ratchet_2);  out.push_back(&ratchet_3);
+        out.push_back(&ratchet_4);  out.push_back(&ratchet_5);
+        out.push_back(&ratchet_6);  out.push_back(&ratchet_7);
+        out.push_back(&ratchet_8);  out.push_back(&ratchet_9);
+        out.push_back(&ratchet_10); out.push_back(&ratchet_11);
+        out.push_back(&ratchet_12); out.push_back(&ratchet_13);
+        out.push_back(&ratchet_14); out.push_back(&ratchet_15);
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -56,24 +126,52 @@ struct Sequencer : vivid::OperatorBase {
 
         float adj_phase = std::fmod(phase - phase_offset_ + 1.0f, 1.0f);
         int n = std::max(steps.int_value(), 1);
-        int step = static_cast<int>(adj_phase * n);
+        float scaled = adj_phase * static_cast<float>(n);
+        int step = static_cast<int>(scaled);
         step = std::clamp(step, 0, n - 1);
 
-        // val_0 is param index 1 (steps is param 0)
-        float value = ctx->param_values[1 + step];
-
         bool step_changed = (step != prev_step_);
-        prev_step_ = step;
+        if (step_changed) {
+            float prob = std::clamp(ctx->param_values[kProbBase + step], 0.0f, 1.0f);
+            step_active_ = (prob >= 1.0f) || (next_random() < prob);
+            int raw_ratchet = static_cast<int>(std::lround(ctx->param_values[kRatchetBase + step]));
+            current_ratchet_ = std::clamp(raw_ratchet, 1, 8);
+            prev_ratchet_index_ = -1;
+            prev_step_ = step;
+        }
+
+        float value = step_active_ ? ctx->param_values[kValueBase + step] : 0.0f;
+        float step_phase = std::clamp(scaled - static_cast<float>(step), 0.0f, 0.999999f);
+        int ratchet_index = static_cast<int>(step_phase * static_cast<float>(current_ratchet_));
+        ratchet_index = std::clamp(ratchet_index, 0, current_ratchet_ - 1);
+        bool ratchet_trigger = (ratchet_index != prev_ratchet_index_);
+        if (ratchet_trigger) prev_ratchet_index_ = ratchet_index;
 
         ctx->output_values[0] = value;
         ctx->output_values[1] = static_cast<float>(step);
-        ctx->output_values[2] = step_changed ? 1.0f : 0.0f;
+        ctx->output_values[2] = (step_active_ && ratchet_trigger) ? 1.0f : 0.0f;
     }
 
 private:
+    static constexpr int kValueBase = 1;
+    static constexpr int kProbBase = 17;
+    static constexpr int kRatchetBase = 33;
+
+    float next_random() {
+        rng_state_ ^= (rng_state_ << 13);
+        rng_state_ ^= (rng_state_ >> 17);
+        rng_state_ ^= (rng_state_ << 5);
+        constexpr float kInvMax = 1.0f / 4294967295.0f;
+        return static_cast<float>(rng_state_) * kInvMax;
+    }
+
     int prev_step_ = -1;
     float phase_offset_ = 0.0f;
     bool prev_reset_ = false;
+    bool step_active_ = true;
+    int current_ratchet_ = 1;
+    int prev_ratchet_index_ = -1;
+    uint32_t rng_state_ = 0xA5C31E59u;
 };
 
 VIVID_REGISTER(Sequencer)

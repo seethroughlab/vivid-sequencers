@@ -88,6 +88,10 @@ target_compile_features(test_package_manifest PRIVATE cxx_std_17)
 if(VIVID_PACKAGE_BUILD_TESTS)
   enable_testing()
 
+  add_executable(test_arpeggiator_patterns tests/test_arpeggiator_patterns.cpp)
+  target_compile_features(test_arpeggiator_patterns PRIVATE cxx_std_17)
+  add_test(NAME test_arpeggiator_patterns COMMAND test_arpeggiator_patterns)
+
   add_executable(test_state_machine tests/test_state_machine.cpp)
   target_include_directories(test_state_machine PRIVATE ${VIVID_SRC_DIR}/src)
   target_link_libraries(test_state_machine PRIVATE vivid_operator_api)
@@ -119,4 +123,6 @@ if(VIVID_PACKAGE_BUILD_TESTS)
   add_test(NAME test_pattern_algebra
     COMMAND test_pattern_algebra
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(test_pattern_algebra PROPERTIES
+    ENVIRONMENT "VIVID_CORE_PLUGIN_DIR=${VIVID_BUILD_DIR}")
 endif()

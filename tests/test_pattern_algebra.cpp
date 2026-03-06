@@ -185,6 +185,125 @@ static void test_pattern_seq(vivid::OperatorRegistry& registry) {
 }
 
 // =====================================================================
+// Test Sequencer: baseline trigger, per-step probability, and ratchets
+// =====================================================================
+static void test_sequencer(vivid::OperatorRegistry& registry) {
+    std::fprintf(stderr, "\n=== Sequencer Tests ===\n");
+
+    // Baseline behavior: ratchet=1 should trigger only when step changes.
+    {
+        vivid::Graph g;
+        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
+        g.add_node("seq", "Sequencer", {
+            {"steps", 4.0f},
+            {"val_0", 10.0f},
+            {"val_1", 20.0f},
+            {"val_2", 30.0f},
+            {"val_3", 40.0f}
+        });
+        g.add_connection("phase_src", "out", "seq", "phase");
+
+        vivid::Scheduler sched;
+        check(sched.build(g, registry), "Sequencer baseline build");
+        auto* src = sched.find_node_mut("phase_src");
+        auto* seq = sched.find_node_mut("seq");
+        check(src != nullptr, "Sequencer baseline source found");
+        check(seq != nullptr, "Sequencer baseline node found");
+        if (!src || !seq) { sched.shutdown(); return; }
+
+        src->param_values[0] = 0.00f;
+        sched.tick(0.0, 0.016, 0);
+        check_float(seq->output_values[1], 0.0f, "baseline step=0");
+        check_float(seq->output_values[0], 10.0f, "baseline value step0");
+        check_float(seq->output_values[2], 1.0f, "baseline trigger on first step");
+
+        src->param_values[0] = 0.10f;
+        sched.tick(0.016, 0.016, 1);
+        check_float(seq->output_values[2], 0.0f, "baseline no retrigger within step");
+
+        src->param_values[0] = 0.30f; // step 1
+        sched.tick(0.032, 0.016, 2);
+        check_float(seq->output_values[1], 1.0f, "baseline step=1");
+        check_float(seq->output_values[0], 20.0f, "baseline value step1");
+        check_float(seq->output_values[2], 1.0f, "baseline trigger on step change");
+        sched.shutdown();
+    }
+
+    // Probability: prob_1=0 should silence and suppress trigger on step 1.
+    {
+        vivid::Graph g;
+        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
+        g.add_node("seq", "Sequencer", {
+            {"steps", 4.0f},
+            {"val_0", 10.0f},
+            {"val_1", 20.0f},
+            {"prob_1", 0.0f}
+        });
+        g.add_connection("phase_src", "out", "seq", "phase");
+
+        vivid::Scheduler sched;
+        check(sched.build(g, registry), "Sequencer probability build");
+        auto* src = sched.find_node_mut("phase_src");
+        auto* seq = sched.find_node_mut("seq");
+        check(src != nullptr, "Sequencer probability source found");
+        check(seq != nullptr, "Sequencer probability node found");
+        if (!src || !seq) { sched.shutdown(); return; }
+
+        src->param_values[0] = 0.00f; // step 0
+        sched.tick(0.0, 0.016, 0);
+        src->param_values[0] = 0.30f; // step 1
+        sched.tick(0.016, 0.016, 1);
+
+        check_float(seq->output_values[1], 1.0f, "probability test step=1");
+        check_float(seq->output_values[0], 0.0f, "probability test value silenced");
+        check_float(seq->output_values[2], 0.0f, "probability test trigger suppressed");
+        sched.shutdown();
+    }
+
+    // Ratchet: one step with ratchet_0=4 should emit four triggers across the phase.
+    {
+        vivid::Graph g;
+        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
+        g.add_node("seq", "Sequencer", {
+            {"steps", 1.0f},
+            {"val_0", 11.0f},
+            {"ratchet_0", 4.0f}
+        });
+        g.add_connection("phase_src", "out", "seq", "phase");
+
+        vivid::Scheduler sched;
+        check(sched.build(g, registry), "Sequencer ratchet build");
+        auto* src = sched.find_node_mut("phase_src");
+        auto* seq = sched.find_node_mut("seq");
+        check(src != nullptr, "Sequencer ratchet source found");
+        check(seq != nullptr, "Sequencer ratchet node found");
+        if (!src || !seq) { sched.shutdown(); return; }
+
+        src->param_values[0] = 0.01f; // bucket 0
+        sched.tick(0.0, 0.016, 0);
+        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 0");
+
+        src->param_values[0] = 0.12f; // still bucket 0
+        sched.tick(0.016, 0.016, 1);
+        check_float(seq->output_values[2], 0.0f, "ratchet no retrigger within bucket");
+
+        src->param_values[0] = 0.26f; // bucket 1
+        sched.tick(0.032, 0.016, 2);
+        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 1");
+
+        src->param_values[0] = 0.51f; // bucket 2
+        sched.tick(0.048, 0.016, 3);
+        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 2");
+
+        src->param_values[0] = 0.76f; // bucket 3
+        sched.tick(0.064, 0.016, 4);
+        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 3");
+        check_float(seq->output_values[0], 11.0f, "ratchet keeps step value");
+        sched.shutdown();
+    }
+}
+
+// =====================================================================
 // Test Stack: Concat and Interleave modes
 // =====================================================================
 static void test_stack(vivid::OperatorRegistry& registry) {
@@ -499,10 +618,12 @@ int main() {
     copy_op_from(core_plugin_dir, "pat_transform");
     copy_op_from(core_plugin_dir, "spread_source_op");
     copy_op_from(core_plugin_dir, "clock");
+    copy_op_from(".", "sequencer");
     vivid::OperatorRegistry registry;
     check(registry.scan(staging.c_str()), "registry.scan() succeeds");
     check(registry.find("Euclidean") != nullptr, "Euclidean registered");
     check(registry.find("PatternSeq") != nullptr, "PatternSeq registered");
+    check(registry.find("Sequencer") != nullptr, "Sequencer registered");
     check(registry.find("Stack") != nullptr, "Stack registered");
     check(registry.find("Alternate") != nullptr, "Alternate registered");
     check(registry.find("PatTransform") != nullptr, "PatTransform registered");
@@ -511,6 +632,7 @@ int main() {
 
     test_euclidean(registry);
     test_pattern_seq(registry);
+    test_sequencer(registry);
     test_stack(registry);
     test_alternate(registry);
     test_pat_transform(registry);
