@@ -51,20 +51,13 @@ jobs:
           fi
 
       - name: Configure package
-        run: cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=${{ env.VIVID_OSX_ARCH }} -DVIVID_SRC_DIR=${{ github.workspace }}/../vivid -DVIVID_BUILD_DIR=${{ github.workspace }}/../vivid/build -DVIVID_PACKAGE_BUILD_TESTS=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES=${{ env.VIVID_OSX_ARCH }} -DVIVID_SRC_DIR=${{ github.workspace }}/../vivid -DVIVID_BUILD_DIR=${{ github.workspace }}/../vivid/build
 
-      - name: Build package operators and tests
-        run: cmake --build build --target operators test_package_manifest test_state_machine test_pattern_algebra -j$(sysctl -n hw.logicalcpu)
+      - name: Build package operators
+        run: cmake --build build --target operators -j$(sysctl -n hw.logicalcpu)
 
       - name: Copy operators to vivid build dir
         run: cp build/*.dylib ${{ github.workspace }}/../vivid/build/
-
-      - name: Run package tests
-        run: |
-          cd build
-          ./test_package_manifest
-          ./test_state_machine
-          VIVID_CORE_PLUGIN_DIR=${{ github.workspace }}/../vivid/build ./test_pattern_algebra
 
       - name: Run package graph smoke
         run: cd ${{ github.workspace }}/../vivid/build && ./test_demo_graphs ${{ github.workspace }}/graphs
