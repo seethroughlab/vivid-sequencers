@@ -68,15 +68,15 @@ struct Arpeggiator : vivid::ControlOperatorBase {
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
         // Inputs
-        out.push_back({"beat_phase", VIVID_PORT_CONTROL_FLOAT,  VIVID_PORT_INPUT});   // [0]
-        out.push_back({"notes",      VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_INPUT});   // [1]
-        out.push_back({"velocities", VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_INPUT});   // [2]
-        out.push_back({"gates",      VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_INPUT});   // [3]
+        out.push_back({"beat_phase", VIVID_PORT_FLOAT,  VIVID_PORT_INPUT});   // [0]
+        out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_INPUT});   // [1]
+        out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_INPUT});   // [2]
+        out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_INPUT});   // [3]
         // Outputs
-        out.push_back({"notes",      VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_OUTPUT});  // [0]
-        out.push_back({"velocities", VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_OUTPUT});  // [1]
-        out.push_back({"gates",      VIVID_PORT_CONTROL_SPREAD, VIVID_PORT_OUTPUT});  // [2]
-        out.push_back({"step",       VIVID_PORT_CONTROL_FLOAT,  VIVID_PORT_OUTPUT});  // [3]
+        out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [0]
+        out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [1]
+        out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [2]
+        out.push_back({"step",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [3]
     }
 
     void process(const VividProcessContext* ctx) override {
