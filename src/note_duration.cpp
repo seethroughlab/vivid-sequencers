@@ -1,8 +1,7 @@
 #include "operator_api/operator.h"
 
-struct NoteDuration : vivid::OperatorBase {
+struct NoteDuration : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "NoteDuration";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = false;
 
     vivid::Param<int> subdivision{"subdivision", 2,

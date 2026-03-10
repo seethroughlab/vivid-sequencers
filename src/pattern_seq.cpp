@@ -3,9 +3,8 @@
 #include <cmath>
 #include <cstdint>
 
-struct PatternSeq : vivid::OperatorBase {
+struct PatternSeq : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "PatternSeq";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = true;
 
     vivid::Param<int>   steps       {"steps",       8, 1, 16};

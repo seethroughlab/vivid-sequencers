@@ -2,9 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
-struct NotePattern : vivid::OperatorBase {
+struct NotePattern : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "NotePattern";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = true;
 
     vivid::Param<int>   steps        {"steps",          4, 1, 8};

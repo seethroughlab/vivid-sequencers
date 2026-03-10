@@ -2,9 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
-struct StateMachine : vivid::OperatorBase {
+struct StateMachine : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "StateMachine";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = false;
 
     // Parameters (16 total)

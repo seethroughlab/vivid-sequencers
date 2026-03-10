@@ -4,9 +4,8 @@
 #include <cmath>
 #include <cstring>
 
-struct Arpeggiator : vivid::OperatorBase {
+struct Arpeggiator : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "Arpeggiator";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = true;
 
     // --- Core parameters ---

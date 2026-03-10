@@ -2,9 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
-struct ChordProgression : vivid::OperatorBase {
+struct ChordProgression : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "ChordProgression";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = true;
 
     // --- Global parameters ---

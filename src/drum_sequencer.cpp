@@ -3,9 +3,8 @@
 #include <algorithm>
 #include <cstring>
 
-struct DrumSequencer : vivid::OperatorBase {
+struct DrumSequencer : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "DrumSequencer";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = false;
 
     // Param index layout:

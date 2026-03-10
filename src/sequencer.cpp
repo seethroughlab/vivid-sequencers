@@ -3,9 +3,8 @@
 #include <cmath>
 #include <cstdint>
 
-struct Sequencer : vivid::OperatorBase {
+struct Sequencer : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "Sequencer";
-    static constexpr VividDomain kDomain = VIVID_DOMAIN_CONTROL;
     static constexpr bool kTimeDependent = false;
 
     vivid::Param<int>   steps {"steps",  8, 1, 16};
