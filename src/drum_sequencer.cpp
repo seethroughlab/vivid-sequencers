@@ -9,15 +9,24 @@ struct DrumSequencer : vivid::ControlOperatorBase {
 
     // Param index layout:
     // [0]=steps  [1]=swing
-    // [2..17]=kick_0..15  [18..33]=snare_0..15  [34..49]=hat_0..15
-    // [50..65]=oh_0..15   [66..81]=clap_0..15   [82..97]=tom_0..15
-    // Mod A: [98..113]=kick_ma_0..15  [114..129]=snare_ma_0..15  [130..145]=hat_ma_0..15
-    //        [146..161]=oh_ma_0..15   [162..177]=clap_ma_0..15   [178..193]=tom_ma_0..15
-    // Mod B: [194..209]=kick_mb_0..15 [210..225]=snare_mb_0..15  [226..241]=hat_mb_0..15
-    //        [242..257]=oh_mb_0..15   [258..273]=clap_mb_0..15   [274..289]=tom_mb_0..15
+    // [2..7]=kick_note, snare_note, hat_note, oh_note, clap_note, tom_note
+    // [8..23]=kick_0..15  [24..39]=snare_0..15  [40..55]=hat_0..15
+    // [56..71]=oh_0..15   [72..87]=clap_0..15   [88..103]=tom_0..15
+    // Mod A: [104..119]=kick_ma_0..15  [120..135]=snare_ma_0..15  [136..151]=hat_ma_0..15
+    //        [152..167]=oh_ma_0..15    [168..183]=clap_ma_0..15   [184..199]=tom_ma_0..15
+    // Mod B: [200..215]=kick_mb_0..15  [216..231]=snare_mb_0..15  [232..247]=hat_mb_0..15
+    //        [248..263]=oh_mb_0..15    [264..279]=clap_mb_0..15   [280..295]=tom_mb_0..15
 
     vivid::Param<int>   steps {"steps",  16, 1, 16};
     vivid::Param<float> swing {"swing",  0.0f, 0.0f, 0.5f};
+
+    // MIDI note number per drum track (indices 2..7)
+    vivid::Param<int> kick_note  {"kick_note",  36, 0, 127};
+    vivid::Param<int> snare_note {"snare_note", 38, 0, 127};
+    vivid::Param<int> hat_note   {"hat_note",   42, 0, 127};
+    vivid::Param<int> oh_note    {"oh_note",    46, 0, 127};
+    vivid::Param<int> clap_note  {"clap_note",  39, 0, 127};
+    vivid::Param<int> tom_note   {"tom_note",   45, 0, 127};
 
     // 6 drums x 16 steps = 96 bool params
     vivid::Param<float> kick_0 {"kick_0", 0.0f, 0.0f, 1.0f};
@@ -332,7 +341,15 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&steps);   // 0
         out.push_back(&swing);   // 1
 
-        // kick: 2..17
+        // Note params: 2..7
+        out.push_back(&kick_note);
+        out.push_back(&snare_note);
+        out.push_back(&hat_note);
+        out.push_back(&oh_note);
+        out.push_back(&clap_note);
+        out.push_back(&tom_note);
+
+        // kick: 8..23
         out.push_back(&kick_0);  out.push_back(&kick_1);
         out.push_back(&kick_2);  out.push_back(&kick_3);
         out.push_back(&kick_4);  out.push_back(&kick_5);
@@ -342,7 +359,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&kick_12); out.push_back(&kick_13);
         out.push_back(&kick_14); out.push_back(&kick_15);
 
-        // snare: 18..33
+        // snare: 24..39
         out.push_back(&snare_0);  out.push_back(&snare_1);
         out.push_back(&snare_2);  out.push_back(&snare_3);
         out.push_back(&snare_4);  out.push_back(&snare_5);
@@ -352,7 +369,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&snare_12); out.push_back(&snare_13);
         out.push_back(&snare_14); out.push_back(&snare_15);
 
-        // hat: 34..49
+        // hat: 40..55
         out.push_back(&hat_0);  out.push_back(&hat_1);
         out.push_back(&hat_2);  out.push_back(&hat_3);
         out.push_back(&hat_4);  out.push_back(&hat_5);
@@ -362,7 +379,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&hat_12); out.push_back(&hat_13);
         out.push_back(&hat_14); out.push_back(&hat_15);
 
-        // oh: 50..65
+        // oh: 56..71
         out.push_back(&oh_0);  out.push_back(&oh_1);
         out.push_back(&oh_2);  out.push_back(&oh_3);
         out.push_back(&oh_4);  out.push_back(&oh_5);
@@ -372,7 +389,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&oh_12); out.push_back(&oh_13);
         out.push_back(&oh_14); out.push_back(&oh_15);
 
-        // clap: 66..81
+        // clap: 72..87
         out.push_back(&clap_0);  out.push_back(&clap_1);
         out.push_back(&clap_2);  out.push_back(&clap_3);
         out.push_back(&clap_4);  out.push_back(&clap_5);
@@ -382,7 +399,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&clap_12); out.push_back(&clap_13);
         out.push_back(&clap_14); out.push_back(&clap_15);
 
-        // tom: 82..97
+        // tom: 88..103
         out.push_back(&tom_0);  out.push_back(&tom_1);
         out.push_back(&tom_2);  out.push_back(&tom_3);
         out.push_back(&tom_4);  out.push_back(&tom_5);
@@ -392,7 +409,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&tom_12); out.push_back(&tom_13);
         out.push_back(&tom_14); out.push_back(&tom_15);
 
-        // Mod A kick: 98..113
+        // Mod A kick: 104..119
         out.push_back(&kick_ma_0);  out.push_back(&kick_ma_1);
         out.push_back(&kick_ma_2);  out.push_back(&kick_ma_3);
         out.push_back(&kick_ma_4);  out.push_back(&kick_ma_5);
@@ -402,7 +419,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&kick_ma_12); out.push_back(&kick_ma_13);
         out.push_back(&kick_ma_14); out.push_back(&kick_ma_15);
 
-        // Mod A snare: 114..129
+        // Mod A snare: 120..135
         out.push_back(&snare_ma_0);  out.push_back(&snare_ma_1);
         out.push_back(&snare_ma_2);  out.push_back(&snare_ma_3);
         out.push_back(&snare_ma_4);  out.push_back(&snare_ma_5);
@@ -412,7 +429,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&snare_ma_12); out.push_back(&snare_ma_13);
         out.push_back(&snare_ma_14); out.push_back(&snare_ma_15);
 
-        // Mod A hat: 130..145
+        // Mod A hat: 136..151
         out.push_back(&hat_ma_0);  out.push_back(&hat_ma_1);
         out.push_back(&hat_ma_2);  out.push_back(&hat_ma_3);
         out.push_back(&hat_ma_4);  out.push_back(&hat_ma_5);
@@ -422,7 +439,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&hat_ma_12); out.push_back(&hat_ma_13);
         out.push_back(&hat_ma_14); out.push_back(&hat_ma_15);
 
-        // Mod A oh: 146..161
+        // Mod A oh: 152..167
         out.push_back(&oh_ma_0);  out.push_back(&oh_ma_1);
         out.push_back(&oh_ma_2);  out.push_back(&oh_ma_3);
         out.push_back(&oh_ma_4);  out.push_back(&oh_ma_5);
@@ -432,7 +449,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&oh_ma_12); out.push_back(&oh_ma_13);
         out.push_back(&oh_ma_14); out.push_back(&oh_ma_15);
 
-        // Mod A clap: 162..177
+        // Mod A clap: 168..183
         out.push_back(&clap_ma_0);  out.push_back(&clap_ma_1);
         out.push_back(&clap_ma_2);  out.push_back(&clap_ma_3);
         out.push_back(&clap_ma_4);  out.push_back(&clap_ma_5);
@@ -442,7 +459,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&clap_ma_12); out.push_back(&clap_ma_13);
         out.push_back(&clap_ma_14); out.push_back(&clap_ma_15);
 
-        // Mod A tom: 178..193
+        // Mod A tom: 184..199
         out.push_back(&tom_ma_0);  out.push_back(&tom_ma_1);
         out.push_back(&tom_ma_2);  out.push_back(&tom_ma_3);
         out.push_back(&tom_ma_4);  out.push_back(&tom_ma_5);
@@ -452,7 +469,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&tom_ma_12); out.push_back(&tom_ma_13);
         out.push_back(&tom_ma_14); out.push_back(&tom_ma_15);
 
-        // Mod B kick: 194..209
+        // Mod B kick: 200..215
         out.push_back(&kick_mb_0);  out.push_back(&kick_mb_1);
         out.push_back(&kick_mb_2);  out.push_back(&kick_mb_3);
         out.push_back(&kick_mb_4);  out.push_back(&kick_mb_5);
@@ -462,7 +479,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&kick_mb_12); out.push_back(&kick_mb_13);
         out.push_back(&kick_mb_14); out.push_back(&kick_mb_15);
 
-        // Mod B snare: 210..225
+        // Mod B snare: 216..231
         out.push_back(&snare_mb_0);  out.push_back(&snare_mb_1);
         out.push_back(&snare_mb_2);  out.push_back(&snare_mb_3);
         out.push_back(&snare_mb_4);  out.push_back(&snare_mb_5);
@@ -472,7 +489,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&snare_mb_12); out.push_back(&snare_mb_13);
         out.push_back(&snare_mb_14); out.push_back(&snare_mb_15);
 
-        // Mod B hat: 226..241
+        // Mod B hat: 232..247
         out.push_back(&hat_mb_0);  out.push_back(&hat_mb_1);
         out.push_back(&hat_mb_2);  out.push_back(&hat_mb_3);
         out.push_back(&hat_mb_4);  out.push_back(&hat_mb_5);
@@ -482,7 +499,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&hat_mb_12); out.push_back(&hat_mb_13);
         out.push_back(&hat_mb_14); out.push_back(&hat_mb_15);
 
-        // Mod B oh: 242..257
+        // Mod B oh: 248..263
         out.push_back(&oh_mb_0);  out.push_back(&oh_mb_1);
         out.push_back(&oh_mb_2);  out.push_back(&oh_mb_3);
         out.push_back(&oh_mb_4);  out.push_back(&oh_mb_5);
@@ -492,7 +509,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&oh_mb_12); out.push_back(&oh_mb_13);
         out.push_back(&oh_mb_14); out.push_back(&oh_mb_15);
 
-        // Mod B clap: 258..273
+        // Mod B clap: 264..279
         out.push_back(&clap_mb_0);  out.push_back(&clap_mb_1);
         out.push_back(&clap_mb_2);  out.push_back(&clap_mb_3);
         out.push_back(&clap_mb_4);  out.push_back(&clap_mb_5);
@@ -502,7 +519,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&clap_mb_12); out.push_back(&clap_mb_13);
         out.push_back(&clap_mb_14); out.push_back(&clap_mb_15);
 
-        // Mod B tom: 274..289
+        // Mod B tom: 280..295
         out.push_back(&tom_mb_0);  out.push_back(&tom_mb_1);
         out.push_back(&tom_mb_2);  out.push_back(&tom_mb_3);
         out.push_back(&tom_mb_4);  out.push_back(&tom_mb_5);
@@ -537,6 +554,10 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back({"oh_mod_b",    VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
         out.push_back({"clap_mod_b",  VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
         out.push_back({"tom_mod_b",   VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
+        // Spread outputs for SP404 integration
+        out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -556,8 +577,9 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         bool step_changed = (step != prev_step_);
         prev_step_ = step;
 
-        // Drum base param indices: kick=2, snare=18, hat=34, oh=50, clap=66, tom=82
-        static constexpr int kDrumBase[6] = { 2, 18, 34, 50, 66, 82 };
+        // Drum base param indices (shifted +6 for note params)
+        static constexpr int kDrumBase[6] = { 8, 24, 40, 56, 72, 88 };
+        static constexpr int kNoteBase = 2; // 6 note params at indices 2..7
 
         for (int d = 0; d < 6; ++d) {
             bool active = (step_changed && ctx->param_values[kDrumBase[d] + step] > 0.5f);
@@ -566,12 +588,34 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         ctx->output_values[6] = static_cast<float>(step);
 
         // Per-step modulation outputs (continuous — emitted every frame)
-        static constexpr int kModABase[6] = { 98, 114, 130, 146, 162, 178 };
-        static constexpr int kModBBase[6] = { 194, 210, 226, 242, 258, 274 };
+        static constexpr int kModABase[6] = { 104, 120, 136, 152, 168, 184 };
+        static constexpr int kModBBase[6] = { 200, 216, 232, 248, 264, 280 };
 
         for (int d = 0; d < 6; ++d) {
             ctx->output_values[7 + d]  = ctx->param_values[kModABase[d] + step];
             ctx->output_values[13 + d] = ctx->param_values[kModBBase[d] + step];
+        }
+
+        // Pack all 6 drum tracks into fixed-length spread outputs.
+        // Fixed 6-element spreads keep slot-to-drum mapping stable so
+        // the SP404's GateTracker can detect per-drum rising/falling edges.
+        // Spread port indices = 19,20,21 (after 19 float output ports).
+        if (ctx->output_spreads) {
+            auto& gates_sp = ctx->output_spreads[19];
+            auto& notes_sp = ctx->output_spreads[20];
+            auto& vels_sp  = ctx->output_spreads[21];
+
+            constexpr int kNumDrums = 6;
+            if (gates_sp.capacity >= kNumDrums) {
+                gates_sp.length = kNumDrums;
+                notes_sp.length = kNumDrums;
+                vels_sp.length  = kNumDrums;
+                for (int d = 0; d < kNumDrums; ++d) {
+                    gates_sp.data[d] = ctx->output_values[d];
+                    notes_sp.data[d] = static_cast<float>(ctx->param_values[kNoteBase + d]);
+                    vels_sp.data[d]  = ctx->param_values[kModABase[d] + step];
+                }
+            }
         }
     }
 
@@ -598,7 +642,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
             {80, 200, 100},   // tom — green
         };
 
-        static constexpr int kDrumBase[6] = { 2, 18, 34, 50, 66, 82 };
+        static constexpr int kDrumBase[6] = { 8, 24, 40, 56, 72, 88 };
 
         float pad_x = 2.0f, pad_y = 2.0f;
         float grid_w = w - 2.0f * pad_x;

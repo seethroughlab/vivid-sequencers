@@ -77,14 +77,10 @@
     { "from": "bloom1/texture", "to": "comp1/b" },
     { "from": "comp1/texture",  "to": "video_out/input" },
 
-    { "from": "synth1/output_left",  "to": "audio_out/left" },
-    { "from": "synth1/output_right", "to": "audio_out/right" },
-    { "from": "kick1/output",        "to": "audio_out/left" },
-    { "from": "kick1/output",        "to": "audio_out/right" },
-    { "from": "snare1/output",       "to": "audio_out/left" },
-    { "from": "snare1/output",       "to": "audio_out/right" },
-    { "from": "hat1/output",         "to": "audio_out/left" },
-    { "from": "hat1/output",         "to": "audio_out/right" }
+    { "from": "synth1/output",  "to": "audio_out/input" },
+    { "from": "kick1/output",   "to": "audio_out/input" },
+    { "from": "snare1/output",  "to": "audio_out/input" },
+    { "from": "hat1/output",    "to": "audio_out/input" }
   ],
 
   "presets": {
