@@ -1,4 +1,6 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -558,6 +560,8 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        // MIDI handle output
+        out.push_back(VIVID_HANDLE_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -616,6 +620,23 @@ struct DrumSequencer : vivid::ControlOperatorBase {
                     vels_sp.data[d]  = ctx->param_values[kModABase[d] + step];
                 }
             }
+        }
+
+        // Populate MIDI handle output with note-on messages for active drums
+        midi_buf_.count = 0;
+        for (int d = 0; d < 6; ++d) {
+            bool active = (step_changed && ctx->param_values[kDrumBase[d] + step] > 0.5f);
+            if (active && midi_buf_.count < VIVID_MIDI_BUFFER_CAPACITY) {
+                VividMidiMessage& msg = midi_buf_.messages[midi_buf_.count++];
+                msg.status = 0x90;  // note-on, channel 1
+                msg.data1 = static_cast<uint8_t>(ctx->param_values[kNoteBase + d]);
+                msg.data2 = 127;    // full velocity
+                msg.reserved = 0;
+                msg.frame_offset_samples = 0;
+            }
+        }
+        if (ctx->output_handles && ctx->output_handle_count > 0) {
+            ctx->output_handles[0] = &midi_buf_;
         }
     }
 
@@ -719,6 +740,7 @@ private:
     int prev_step_ = -1;
     float phase_offset_ = 0.0f;
     bool prev_reset_ = false;
+    VividMidiBuffer midi_buf_ = {};
 };
 
 VIVID_REGISTER(DrumSequencer)
