@@ -1,4 +1,7 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include <algorithm>
 #include <cmath>
 
@@ -45,9 +48,15 @@ struct ChordProgression : vivid::ControlOperatorBase {
     vivid::Param<int>   ext_6 {"ext_6", 0, {"Triad","7th","Add9"}};
     vivid::Param<int>   ext_7 {"ext_7", 0, {"Triad","7th","Add9"}};
 
+    vivid::Param<int> midi_channel {"midi_channel", 1, 1, 16};
+
     // Internal state
     int beat_count_ = 0;
     float prev_phase_ = 0.0f;
+    bool prev_gate_ = false;
+    int prev_notes_[5] = {-1, -1, -1, -1, -1};
+    int prev_note_count_ = 0;
+    VividMidiBuffer midi_buf_ = {};
 
     // Semitone intervals from key root for each scale degree
     static constexpr int kScaleIntervals[6][7] = {
@@ -80,6 +89,7 @@ struct ChordProgression : vivid::ControlOperatorBase {
     //  7..14   = degree_0..degree_7
     //  15..22  = voicing_0..voicing_7
     //  23..30  = ext_0..ext_7
+    //  31      = midi_channel
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&steps);           // 0
@@ -101,6 +111,7 @@ struct ChordProgression : vivid::ControlOperatorBase {
         out.push_back(&ext_2);    out.push_back(&ext_3);
         out.push_back(&ext_4);    out.push_back(&ext_5);
         out.push_back(&ext_6);    out.push_back(&ext_7);
+        out.push_back(&midi_channel); // 31
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -108,6 +119,7 @@ struct ChordProgression : vivid::ControlOperatorBase {
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     // Build chord intervals relative to the chord root using diatonic third-stacking.
@@ -237,6 +249,42 @@ struct ChordProgression : vivid::ControlOperatorBase {
                     gates_sp.data[i] = gate_val;
                 }
             }
+        }
+
+        // MIDI output: polyphonic note-on/off on gate edges
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
+        uint8_t midi_vel = static_cast<uint8_t>(std::clamp(static_cast<int>(vel * 127.0f), 0, 127));
+        midi_buf_.count = 0;
+        bool gate_high = (gate_val > 0.5f);
+        if (gate_high && !prev_gate_) {
+            // Gate rising: note-off previous chord, note-on new chord
+            for (int i = 0; i < prev_note_count_; ++i) {
+                if (prev_notes_[i] >= 0) {
+                    vivid_sequencers::midi_note_off(midi_buf_,
+                        static_cast<uint8_t>(prev_notes_[i]), ch);
+                }
+            }
+            prev_note_count_ = chord_size;
+            for (int i = 0; i < chord_size && i < 5; ++i) {
+                int note = std::clamp(base_note + intervals[i], 0, 127);
+                vivid_sequencers::midi_note_on(midi_buf_,
+                    static_cast<uint8_t>(note), midi_vel, ch);
+                prev_notes_[i] = note;
+            }
+        } else if (!gate_high && prev_gate_) {
+            // Gate falling: note-off all
+            for (int i = 0; i < prev_note_count_; ++i) {
+                if (prev_notes_[i] >= 0) {
+                    vivid_sequencers::midi_note_off(midi_buf_,
+                        static_cast<uint8_t>(prev_notes_[i]), ch);
+                    prev_notes_[i] = -1;
+                }
+            }
+            prev_note_count_ = 0;
+        }
+        prev_gate_ = gate_high;
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
         }
 
         // Scalar fallback: first note of chord

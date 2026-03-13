@@ -1,4 +1,7 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -56,6 +59,7 @@ struct Sequencer : vivid::ControlOperatorBase {
     vivid::Param<int>   ratchet_13{"ratchet_13", 1, 1, 8};
     vivid::Param<int>   ratchet_14{"ratchet_14", 1, 1, 8};
     vivid::Param<int>   ratchet_15{"ratchet_15", 1, 1, 8};
+    vivid::Param<int>   midi_channel{"midi_channel", 1, 1, 16};
 
     Sequencer() {
         vivid::semantic_tag(steps, "count");
@@ -104,6 +108,8 @@ struct Sequencer : vivid::ControlOperatorBase {
         out.push_back(&ratchet_10); out.push_back(&ratchet_11);
         out.push_back(&ratchet_12); out.push_back(&ratchet_13);
         out.push_back(&ratchet_14); out.push_back(&ratchet_15);
+
+        out.push_back(&midi_channel); // 49
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -112,6 +118,7 @@ struct Sequencer : vivid::ControlOperatorBase {
         out.push_back({"value",   VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
         out.push_back({"step",    VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
         out.push_back({"trigger", VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -146,9 +153,26 @@ struct Sequencer : vivid::ControlOperatorBase {
         bool ratchet_trigger = (ratchet_index != prev_ratchet_index_);
         if (ratchet_trigger) prev_ratchet_index_ = ratchet_index;
 
+        bool trigger = step_active_ && ratchet_trigger;
         ctx->output_values[0] = value;
         ctx->output_values[1] = static_cast<float>(step);
-        ctx->output_values[2] = (step_active_ && ratchet_trigger) ? 1.0f : 0.0f;
+        ctx->output_values[2] = trigger ? 1.0f : 0.0f;
+
+        // MIDI output: note-on on trigger, legato note-off before new note
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
+        midi_buf_.count = 0;
+        if (trigger) {
+            uint8_t note = static_cast<uint8_t>(std::clamp(static_cast<int>(value), 0, 127));
+            if (prev_midi_note_ >= 0) {
+                vivid_sequencers::midi_note_off(midi_buf_,
+                    static_cast<uint8_t>(prev_midi_note_), ch);
+            }
+            vivid_sequencers::midi_note_on(midi_buf_, note, 100, ch);
+            prev_midi_note_ = note;
+        }
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
+        }
     }
 
 private:
@@ -171,6 +195,8 @@ private:
     int current_ratchet_ = 1;
     int prev_ratchet_index_ = -1;
     uint32_t rng_state_ = 0xA5C31E59u;
+    int prev_midi_note_ = -1;
+    VividMidiBuffer midi_buf_ = {};
 };
 
 VIVID_REGISTER(Sequencer)

@@ -1,4 +1,7 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -27,8 +30,9 @@ struct PatternSeq : vivid::ControlOperatorBase {
     vivid::Param<float> val_13 {"val_13", 0.0f, -10000.0f, 10000.0f};
     vivid::Param<float> val_14 {"val_14", 0.0f, -10000.0f, 10000.0f};
     vivid::Param<float> val_15 {"val_15", 0.0f, -10000.0f, 10000.0f};
+    vivid::Param<int>   midi_channel {"midi_channel", 1, 1, 16};
 
-    // Param indices: steps=0, rate=1, gate_length=2, probability=3, val_0..val_15=4..19
+    // Param indices: steps=0, rate=1, gate_length=2, probability=3, val_0..val_15=4..19, midi_channel=20
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&steps);        // 0
@@ -43,6 +47,8 @@ struct PatternSeq : vivid::ControlOperatorBase {
         out.push_back(&val_10); out.push_back(&val_11);  // 14..15
         out.push_back(&val_12); out.push_back(&val_13);  // 16..17
         out.push_back(&val_14); out.push_back(&val_15);  // 18..19
+
+        out.push_back(&midi_channel); // 20
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -52,6 +58,7 @@ struct PatternSeq : vivid::ControlOperatorBase {
         out.push_back({"gate",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});   // out[2]
         out.push_back({"step",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});   // out[3]
         out.push_back({"pattern",    VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});   // spread[0]
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -102,6 +109,32 @@ struct PatternSeq : vivid::ControlOperatorBase {
         ctx->output_values[2] = gate;
         ctx->output_values[3] = static_cast<float>(current_step);
 
+        // MIDI output: note-on on gate rising edge, note-off on falling edge
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
+        midi_buf_.count = 0;
+        bool gate_high = (gate > 0.5f);
+        if (gate_high && !prev_gate_) {
+            // Gate rising edge: send note-off for previous, note-on for new
+            if (prev_midi_note_ >= 0) {
+                vivid_sequencers::midi_note_off(midi_buf_,
+                    static_cast<uint8_t>(prev_midi_note_), ch);
+            }
+            uint8_t note = static_cast<uint8_t>(std::clamp(static_cast<int>(out_value), 0, 127));
+            vivid_sequencers::midi_note_on(midi_buf_, note, 100, ch);
+            prev_midi_note_ = note;
+        } else if (!gate_high && prev_gate_) {
+            // Gate falling edge: note-off
+            if (prev_midi_note_ >= 0) {
+                vivid_sequencers::midi_note_off(midi_buf_,
+                    static_cast<uint8_t>(prev_midi_note_), ch);
+                prev_midi_note_ = -1;
+            }
+        }
+        prev_gate_ = gate_high;
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
+        }
+
         // Full pattern as spread (output port 4 = pattern)
         if (ctx->output_spreads) {
             auto& sp = ctx->output_spreads[4];
@@ -122,6 +155,9 @@ private:
     float prev_phase_ = 0.0f;
     int beat_count_ = 0;
     int prev_step_ = -1;
+    bool prev_gate_ = false;
+    int prev_midi_note_ = -1;
+    VividMidiBuffer midi_buf_ = {};
 
     static uint32_t xorshift32(uint32_t state) {
         state ^= state << 13;

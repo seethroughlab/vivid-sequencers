@@ -1,4 +1,7 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include "arpeggiator_patterns.h"
 #include <algorithm>
 #include <cmath>
@@ -36,6 +39,7 @@ struct Arpeggiator : vivid::ControlOperatorBase {
     vivid::Param<int> tr_5 {"tr_5", 0, -24, 24};
     vivid::Param<int> tr_6 {"tr_6", 0, -24, 24};
     vivid::Param<int> tr_7 {"tr_7", 0, -24, 24};
+    vivid::Param<int> midi_channel {"midi_channel", 1, 1, 16};
 
     // Param indices:
     //  0       = mode
@@ -47,6 +51,7 @@ struct Arpeggiator : vivid::ControlOperatorBase {
     //  6       = mod_steps
     //  7..14   = vel_0..vel_7
     //  15..22  = tr_0..tr_7
+    //  23      = midi_channel
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&mode);         // 0
@@ -64,6 +69,7 @@ struct Arpeggiator : vivid::ControlOperatorBase {
         out.push_back(&tr_2);  out.push_back(&tr_3);
         out.push_back(&tr_4);  out.push_back(&tr_5);
         out.push_back(&tr_6);  out.push_back(&tr_7);
+        out.push_back(&midi_channel); // 23
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -77,6 +83,7 @@ struct Arpeggiator : vivid::ControlOperatorBase {
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [1]
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [2]
         out.push_back({"step",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [3]
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -392,6 +399,11 @@ private:
     float latch_vels_[16] = {};
     int latch_count_ = 0;
 
+    // MIDI state
+    bool prev_midi_gate_ = false;
+    int prev_midi_note_ = -1;
+    VividMidiBuffer midi_buf_ = {};
+
     // RNG state for Random mode
     uint32_t rng_state_ = 12345;
 
@@ -445,6 +457,31 @@ private:
         ctx->output_values[1] = vel;
         ctx->output_values[2] = gate;
         ctx->output_values[3] = static_cast<float>(step);
+
+        // MIDI output: note-on on gate rising edge, note-off on falling edge
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
+        midi_buf_.count = 0;
+        bool gate_high = (gate > 0.5f);
+        if (gate_high && !prev_midi_gate_) {
+            if (prev_midi_note_ >= 0) {
+                vivid_sequencers::midi_note_off(midi_buf_,
+                    static_cast<uint8_t>(prev_midi_note_), ch);
+            }
+            uint8_t midi_note = static_cast<uint8_t>(std::clamp(static_cast<int>(note), 0, 127));
+            uint8_t midi_vel = static_cast<uint8_t>(std::clamp(static_cast<int>(vel * 127.0f), 0, 127));
+            vivid_sequencers::midi_note_on(midi_buf_, midi_note, midi_vel, ch);
+            prev_midi_note_ = midi_note;
+        } else if (!gate_high && prev_midi_gate_) {
+            if (prev_midi_note_ >= 0) {
+                vivid_sequencers::midi_note_off(midi_buf_,
+                    static_cast<uint8_t>(prev_midi_note_), ch);
+                prev_midi_note_ = -1;
+            }
+        }
+        prev_midi_gate_ = gate_high;
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
+        }
     }
 };
 
