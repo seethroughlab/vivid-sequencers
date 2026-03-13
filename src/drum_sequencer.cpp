@@ -1,9 +1,27 @@
 #include "operator_api/operator.h"
 #include "operator_api/midi_types.h"
 #include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+
+namespace drum_insp {
+static const char* kDrumPrefix[] = {"kick_", "snare_", "hat_", "oh_", "clap_", "tom_"};
+static const char* kDrumLabel[] = {"KK", "SN", "CH", "OH", "CP", "TM"};
+static constexpr float kDrumColors[6][3] = {
+    {0.86f, 0.31f, 0.31f}, {0.86f, 0.75f, 0.24f}, {0.24f, 0.78f, 0.71f},
+    {0.31f, 0.51f, 0.86f}, {0.63f, 0.35f, 0.78f}, {0.31f, 0.78f, 0.39f},
+};
+static const char* kModAPrefix[] = {"kick_ma_", "snare_ma_", "hat_ma_", "oh_ma_", "clap_ma_", "tom_ma_"};
+static const char* kModBPrefix[] = {"kick_mb_", "snare_mb_", "hat_mb_", "oh_mb_", "clap_mb_", "tom_mb_"};
+static const char* kTabLabels[] = {"Pattern", "Mod A", "Mod B"};
+static constexpr float kLabelW = 28.0f;
+static constexpr float kCellH = 14.0f;
+static constexpr float kCellPad = 2.0f;
+static constexpr float kTabW = 80.0f;
+static constexpr float kTabH = 18.0f;
+} // namespace drum_insp
 
 struct DrumSequencer : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "DrumSequencer";
@@ -339,6 +357,8 @@ struct DrumSequencer : vivid::ControlOperatorBase {
     vivid::Param<float> tom_mb_14{"tom_mb_14",0.5f, 0.0f, 1.0f};
     vivid::Param<float> tom_mb_15{"tom_mb_15",0.5f, 0.0f, 1.0f};
 
+    vivid::Param<int> midi_channel {"midi_channel", 1, 1, 16};
+
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&steps);   // 0
         out.push_back(&swing);   // 1
@@ -530,6 +550,8 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&tom_mb_10); out.push_back(&tom_mb_11);
         out.push_back(&tom_mb_12); out.push_back(&tom_mb_13);
         out.push_back(&tom_mb_14); out.push_back(&tom_mb_15);
+
+        out.push_back(&midi_channel); // 296
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -560,8 +582,8 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
-        // MIDI handle output
-        out.push_back(VIVID_HANDLE_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
+        // MIDI output
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -622,22 +644,194 @@ struct DrumSequencer : vivid::ControlOperatorBase {
             }
         }
 
-        // Populate MIDI handle output with note-on messages for active drums
+        // Populate MIDI output with note-on messages for active drums
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
         midi_buf_.count = 0;
         for (int d = 0; d < 6; ++d) {
             bool active = (step_changed && ctx->param_values[kDrumBase[d] + step] > 0.5f);
-            if (active && midi_buf_.count < VIVID_MIDI_BUFFER_CAPACITY) {
-                VividMidiMessage& msg = midi_buf_.messages[midi_buf_.count++];
-                msg.status = 0x90;  // note-on, channel 1
-                msg.data1 = static_cast<uint8_t>(ctx->param_values[kNoteBase + d]);
-                msg.data2 = 127;    // full velocity
-                msg.reserved = 0;
-                msg.frame_offset_samples = 0;
+            if (active) {
+                vivid_sequencers::midi_note_on(midi_buf_,
+                    static_cast<uint8_t>(ctx->param_values[kNoteBase + d]), 127, ch);
             }
         }
-        if (ctx->output_handles && ctx->output_handle_count > 0) {
-            ctx->output_handles[0] = &midi_buf_;
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
         }
+    }
+
+    // Inspector state
+    int insp_tab_ = 0;
+    bool insp_dragging_ = false;
+    int insp_drag_drum_ = -1;
+    int insp_drag_step_ = -1;
+
+    void draw_inspector(VividInspectorContext* ctx) override {
+        namespace di = drum_insp;
+        auto& d = ctx->draw;
+        void* o = d.opaque;
+        const auto& th = ctx->theme;
+        const auto& mouse = ctx->mouse;
+
+        float px = ctx->content_x;
+        float base_y = ctx->content_y;
+        float panel_w = ctx->content_width;
+
+        int num_steps = (ctx->param_count > 0) ? std::clamp(static_cast<int>(ctx->param_values[0]), 1, 16) : 16;
+
+        // Current step from output[6]
+        int current_step = -1;
+        if (ctx->output_count > 6)
+            current_step = static_cast<int>(ctx->output_values[6]);
+
+        // Layout
+        float grid_w = panel_w - di::kLabelW;
+        float cell_w = grid_w / 16.0f;
+        float grid_h = 6.0f * di::kCellH;
+
+        float y = 4.0f; // relative y offset
+
+        // --- Tab bar ---
+        for (int t = 0; t < 3; ++t) {
+            float tx = static_cast<float>(t) * di::kTabW;
+            bool active = (insp_tab_ == t);
+
+            if (active) {
+                d.draw_rect(o, px + tx, base_y + y, di::kTabW, di::kTabH,
+                            {th.dark_bg.r, th.dark_bg.g, th.dark_bg.b, 0.9f});
+                d.draw_rect(o, px + tx, base_y + y + di::kTabH - 2, di::kTabW, 2,
+                            {th.accent.r, th.accent.g, th.accent.b, 1.0f});
+            }
+
+            float mult = active ? 1.5f : 1.0f;
+            float text_alpha = active ? 1.0f : 0.5f;
+            d.draw_text(o, px + tx + 8, base_y + y + 3, di::kTabLabels[t],
+                        {th.dim_text.r * mult, th.dim_text.g * mult, th.dim_text.b * mult, text_alpha}, 1.0f);
+
+            if (mouse.left_clicked &&
+                mouse.x >= tx && mouse.x < tx + di::kTabW &&
+                mouse.y >= y && mouse.y < y + di::kTabH) {
+                insp_tab_ = t;
+            }
+        }
+
+        y += di::kTabH + 2;
+
+        float total_h = grid_h + 8.0f;
+
+        // Dark background for grid area
+        d.draw_rect(o, px, base_y + y, panel_w, total_h,
+                    {th.dark_bg.r, th.dark_bg.g, th.dark_bg.b, 0.9f});
+
+        float grid_x = di::kLabelW;     // relative x
+        float grid_y = y + 4.0f;        // relative y
+
+        // Current step column highlight
+        if (current_step >= 0 && current_step < num_steps) {
+            d.draw_rect(o, px + grid_x + current_step * cell_w, base_y + grid_y,
+                        cell_w, grid_h,
+                        {th.accent.r, th.accent.g, th.accent.b, 0.15f});
+        }
+
+        // Beat group separators
+        for (int b = 1; b < 4; ++b) {
+            float sx = grid_x + b * 4 * cell_w;
+            d.draw_rect(o, px + sx - 0.5f, base_y + grid_y, 1.0f, grid_h,
+                        {th.separator.r, th.separator.g, th.separator.b, 0.6f});
+        }
+
+        static constexpr int kDrumBase[6] = { 8, 24, 40, 56, 72, 88 };
+        static constexpr int kModABase[6] = { 104, 120, 136, 152, 168, 184 };
+        static constexpr int kModBBase[6] = { 200, 216, 232, 248, 264, 280 };
+
+        for (int drum = 0; drum < 6; ++drum) {
+            float row_y = grid_y + drum * di::kCellH;
+
+            // Row label
+            d.draw_text(o, px + 2, base_y + row_y + 1, di::kDrumLabel[drum],
+                        {di::kDrumColors[drum][0], di::kDrumColors[drum][1], di::kDrumColors[drum][2], 0.8f}, 1.0f);
+
+            for (int s = 0; s < 16; ++s) {
+                float cx = grid_x + s * cell_w;
+                float cy = row_y;
+                bool beyond_steps = (s >= num_steps);
+
+                bool trigger_active = false;
+                int trig_idx = kDrumBase[drum] + s;
+                if (trig_idx < static_cast<int>(ctx->param_count))
+                    trigger_active = ctx->param_values[trig_idx] > 0.5f;
+
+                if (insp_tab_ == 0) {
+                    // Pattern tab: boolean toggle
+                    if (trigger_active) {
+                        float alpha = beyond_steps ? 0.25f : 0.9f;
+                        d.draw_rect(o, px + cx + di::kCellPad, base_y + cy + di::kCellPad,
+                                    cell_w - 2 * di::kCellPad, di::kCellH - 2 * di::kCellPad,
+                                    {di::kDrumColors[drum][0], di::kDrumColors[drum][1], di::kDrumColors[drum][2], alpha});
+                    }
+
+                    if (mouse.left_clicked &&
+                        mouse.x >= cx && mouse.x < cx + cell_w &&
+                        mouse.y >= cy && mouse.y < cy + di::kCellH) {
+                        std::string name = std::string(di::kDrumPrefix[drum]) + std::to_string(s);
+                        ctx->commands.set_param(ctx->commands.opaque, name.c_str(),
+                                                trigger_active ? 0.0f : 1.0f);
+                    }
+                } else {
+                    // Mod A or Mod B tab
+                    const int* mod_base = (insp_tab_ == 1) ? kModABase : kModBBase;
+                    int mod_idx = mod_base[drum] + s;
+                    float mod_val = 0.5f;
+                    if (mod_idx < static_cast<int>(ctx->param_count))
+                        mod_val = ctx->param_values[mod_idx];
+
+                    float base_alpha = beyond_steps ? 0.25f : (trigger_active ? 0.8f : 0.3f);
+
+                    // Dark track background
+                    d.draw_rect(o, px + cx + di::kCellPad, base_y + cy + di::kCellPad,
+                                cell_w - 2 * di::kCellPad, di::kCellH - 2 * di::kCellPad,
+                                {0.1f, 0.1f, 0.12f, base_alpha});
+
+                    // Fill bar from bottom
+                    float inner_h = di::kCellH - 2 * di::kCellPad;
+                    float fill_h = mod_val * inner_h;
+                    d.draw_rect(o, px + cx + di::kCellPad,
+                                base_y + cy + di::kCellPad + inner_h - fill_h,
+                                cell_w - 2 * di::kCellPad, fill_h,
+                                {di::kDrumColors[drum][0], di::kDrumColors[drum][1], di::kDrumColors[drum][2], base_alpha});
+
+                    // Click to start drag
+                    if (mouse.left_clicked &&
+                        mouse.x >= cx && mouse.x < cx + cell_w &&
+                        mouse.y >= cy && mouse.y < cy + di::kCellH) {
+                        insp_dragging_ = true;
+                        insp_drag_drum_ = drum;
+                        insp_drag_step_ = s;
+                    }
+                }
+            }
+        }
+
+        // Handle mod drag (continuous while held)
+        if (insp_dragging_ && mouse.left_down) {
+            const char* const* mod_prefix = (insp_tab_ == 1) ? di::kModAPrefix : di::kModBPrefix;
+            float cell_y = grid_y + insp_drag_drum_ * di::kCellH;
+            float inner_y = cell_y + di::kCellPad;
+            float inner_h = di::kCellH - 2 * di::kCellPad;
+            float t = 1.0f - (mouse.y - inner_y) / inner_h;
+            t = std::max(0.0f, std::min(1.0f, t));
+
+            std::string name = std::string(mod_prefix[insp_drag_drum_]) + std::to_string(insp_drag_step_);
+            ctx->commands.set_param(ctx->commands.opaque, name.c_str(), t);
+        }
+
+        if (mouse.left_released) {
+            insp_dragging_ = false;
+            insp_drag_drum_ = -1;
+            insp_drag_step_ = -1;
+        }
+
+        y += total_h + 4;
+        ctx->consumed_height = y;
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
@@ -745,3 +939,4 @@ private:
 
 VIVID_REGISTER(DrumSequencer)
 VIVID_THUMBNAIL(DrumSequencer)
+VIVID_INSPECTOR(DrumSequencer)

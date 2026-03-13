@@ -1,6 +1,21 @@
 #include "operator_api/operator.h"
+#include "operator_api/midi_types.h"
+#include "operator_api/type_id.h"
+#include "midi_helpers.h"
 #include <algorithm>
 #include <cmath>
+
+namespace note_insp {
+static const char* kNoteNames[] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+static const char* kChordAbbr[] = {"M","m","dim","aug","7","m7","M7"};
+static constexpr float kTypeColors[7][3] = {
+    {0.39f, 0.63f, 0.86f}, {0.63f, 0.39f, 0.78f}, {0.78f, 0.39f, 0.39f},
+    {0.86f, 0.71f, 0.31f}, {0.31f, 0.71f, 0.63f}, {0.55f, 0.47f, 0.78f},
+    {0.31f, 0.55f, 0.86f},
+};
+static constexpr float kPreviewH = 60.0f;
+static constexpr float kLineH = 18.0f;
+} // namespace note_insp
 
 struct NotePattern : vivid::ControlOperatorBase {
     static constexpr const char* kName   = "NotePattern";
@@ -27,10 +42,15 @@ struct NotePattern : vivid::ControlOperatorBase {
     vivid::Param<int>   beats_per_step{"beats_per_step", 4, 1, 16};
     vivid::Param<float> gate_length  {"gate_length",    0.8f, 0.01f, 1.0f};
     vivid::Param<float> velocity     {"velocity",       0.8f, 0.0f, 1.0f};
+    vivid::Param<int>   midi_channel {"midi_channel",   1, 1, 16};
 
     // Internal state
     int beat_count_ = 0;
     float prev_phase_ = 0.0f;
+    bool prev_gate_ = false;
+    int prev_notes_[5] = {-1, -1, -1, -1, -1};
+    int prev_note_count_ = 0;
+    VividMidiBuffer midi_buf_ = {};
 
     // Chord interval tables: [type][interval_count], terminated by -1
     // 0=major, 1=minor, 2=dim, 3=aug, 4=dom7, 5=min7, 6=maj7
@@ -58,6 +78,7 @@ struct NotePattern : vivid::ControlOperatorBase {
         out.push_back(&beats_per_step);
         out.push_back(&gate_length);
         out.push_back(&velocity);
+        out.push_back(&midi_channel);
     }
 
     void collect_ports(std::vector<VividPortDescriptor>& out) override {
@@ -65,6 +86,7 @@ struct NotePattern : vivid::ControlOperatorBase {
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
     void process(const VividProcessContext* ctx) override {
@@ -122,12 +144,129 @@ struct NotePattern : vivid::ControlOperatorBase {
             }
         }
 
+        // MIDI output: polyphonic note-on/off on gate edges
+        uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
+        uint8_t midi_vel = static_cast<uint8_t>(std::clamp(static_cast<int>(vel * 127.0f), 0, 127));
+        midi_buf_.count = 0;
+        bool gate_high = (gate_val > 0.5f);
+        if (gate_high && !prev_gate_) {
+            // Gate rising: note-off previous chord, note-on new chord
+            for (int i = 0; i < prev_note_count_; ++i) {
+                if (prev_notes_[i] >= 0) {
+                    vivid_sequencers::midi_note_off(midi_buf_,
+                        static_cast<uint8_t>(prev_notes_[i]), ch);
+                }
+            }
+            prev_note_count_ = chord_size;
+            for (int i = 0; i < chord_size && i < 5; ++i) {
+                int note = std::clamp(root + oct * 12 + intervals[i], 0, 127);
+                vivid_sequencers::midi_note_on(midi_buf_,
+                    static_cast<uint8_t>(note), midi_vel, ch);
+                prev_notes_[i] = note;
+            }
+        } else if (!gate_high && prev_gate_) {
+            // Gate falling: note-off all
+            for (int i = 0; i < prev_note_count_; ++i) {
+                if (prev_notes_[i] >= 0) {
+                    vivid_sequencers::midi_note_off(midi_buf_,
+                        static_cast<uint8_t>(prev_notes_[i]), ch);
+                    prev_notes_[i] = -1;
+                }
+            }
+            prev_note_count_ = 0;
+        }
+        prev_gate_ = gate_high;
+        if (ctx->custom_outputs && ctx->custom_output_count > 0) {
+            ctx->custom_outputs[0] = &midi_buf_;
+        }
+
         // Scalar fallback: first note
         if (chord_size > 0) {
             ctx->output_values[0] = static_cast<float>(root + oct * 12 + intervals[0]);
             ctx->output_values[1] = vel;
             ctx->output_values[2] = gate_val;
         }
+    }
+
+    void draw_inspector(VividInspectorContext* ctx) override {
+        namespace ni = note_insp;
+        auto& d = ctx->draw;
+        void* o = d.opaque;
+        const auto& th = ctx->theme;
+
+        float px = ctx->content_x;
+        float py = ctx->content_y;
+        float w = ctx->content_width;
+        float h = ni::kPreviewH;
+
+        int num_steps = (ctx->param_count > 0) ? static_cast<int>(ctx->param_values[0]) : 4;
+        num_steps = std::max(1, std::min(8, num_steps));
+        float cell_w = w / static_cast<float>(num_steps);
+
+        // Detect current step from first output note (scalar fallback)
+        int current_step = -1;
+        if (ctx->output_count > 0) {
+            float out_note = ctx->output_values[0];
+            int oct = (ctx->param_count > 17) ? static_cast<int>(ctx->param_values[17]) : 4;
+            for (int s = 0; s < num_steps; ++s) {
+                int root = static_cast<int>(ctx->param_values[1 + s]);
+                int chord_type = std::clamp(static_cast<int>(ctx->param_values[9 + s]), 0, 6);
+                float expected = static_cast<float>(root + oct * 12 + kChordIntervals[chord_type][0]);
+                if (std::fabs(out_note - expected) < 0.5f) {
+                    current_step = s;
+                    break;
+                }
+            }
+        }
+
+        py += 4;
+
+        // Dark background
+        d.draw_rect(o, px, py, w, h, {th.dark_bg.r, th.dark_bg.g, th.dark_bg.b, 0.9f});
+
+        for (int s = 0; s < num_steps; ++s) {
+            int root = std::clamp(static_cast<int>(ctx->param_values[1 + s]), 0, 11);
+            int chord_type = std::clamp(static_cast<int>(ctx->param_values[9 + s]), 0, 6);
+
+            float cx = px + s * cell_w;
+            bool is_current = (s == current_step);
+
+            // Current step highlight
+            if (is_current) {
+                d.draw_rect(o, cx, py, cell_w, h, {0.18f, 0.22f, 0.30f, 0.6f});
+            }
+
+            // Note name centered
+            const char* note = ni::kNoteNames[root];
+            float nw = d.text_width(o, note, 1.0f);
+            float text_x = cx + (cell_w - nw) * 0.5f;
+            float text_y = py + 6;
+            float bright = is_current ? 1.0f : 0.85f;
+            d.draw_text(o, text_x, text_y, note, {bright, bright, bright, 1.0f}, 1.0f);
+
+            // Chord abbreviation below in type color
+            const char* chord = ni::kChordAbbr[chord_type];
+            float cw2 = d.text_width(o, chord, 1.0f);
+            float chord_x = cx + (cell_w - cw2) * 0.5f;
+            float chord_y = text_y + ni::kLineH;
+            const float* tc = ni::kTypeColors[chord_type];
+            d.draw_text(o, chord_x, chord_y, chord,
+                        {tc[0], tc[1], tc[2], is_current ? 1.0f : 0.7f}, 1.0f);
+
+            // Colored bar at bottom
+            float bar_h = 4.0f;
+            float bar_y = py + h - bar_h - 2.0f;
+            d.draw_rect(o, cx + 2, bar_y, cell_w - 4, bar_h,
+                        {tc[0], tc[1], tc[2], is_current ? 0.9f : 0.6f});
+
+            // Cell divider
+            if (s > 0) {
+                d.draw_rect(o, cx, py, 1, h,
+                            {th.separator.r, th.separator.g, th.separator.b, 0.5f});
+            }
+        }
+
+        ctx->consumed_height = 4.0f + h + 4.0f;
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
@@ -256,3 +395,4 @@ struct NotePattern : vivid::ControlOperatorBase {
 
 VIVID_REGISTER(NotePattern)
 VIVID_THUMBNAIL(NotePattern)
+VIVID_INSPECTOR(NotePattern)
