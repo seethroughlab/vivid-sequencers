@@ -15,6 +15,7 @@
     "note_duration",
     "arpeggiator",
     "chord_progression",
-    "state_machine"
+    "state_machine",
+    "tracker"
   ]
 }

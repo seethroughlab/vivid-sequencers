@@ -78,6 +78,7 @@ set(VIVID_SEQUENCER_OPS
   arpeggiator
   chord_progression
   state_machine
+  tracker
 )
 
 foreach(name IN LISTS VIVID_SEQUENCER_OPS)
