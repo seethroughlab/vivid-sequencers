@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-struct ChordProgression : vivid::ControlOperatorBase {
+struct ChordProgression : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "ChordProgression";
     static constexpr bool kTimeDependent = true;
 
@@ -192,8 +192,8 @@ struct ChordProgression : vivid::ControlOperatorBase {
         }
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float beat_phase = ctx->input_values[0];
+    void process_audio(const VividAudioContext* ctx) override {
+        float beat_phase = ctx->input_float_values[0];
         int num_steps = steps.int_value();
         int kr = key_root.int_value();
         int m  = mode.int_value();
@@ -289,9 +289,9 @@ struct ChordProgression : vivid::ControlOperatorBase {
 
         // Scalar fallback: first note of chord
         if (chord_size > 0) {
-            ctx->output_values[0] = static_cast<float>(base_note + intervals[0]);
-            ctx->output_values[1] = vel;
-            ctx->output_values[2] = gate_val;
+            ctx->output_float_values[0] = static_cast<float>(base_note + intervals[0]);
+            ctx->output_float_values[1] = vel;
+            ctx->output_float_values[2] = gate_val;
         }
     }
 

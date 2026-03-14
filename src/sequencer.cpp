@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdint>
 
-struct Sequencer : vivid::ControlOperatorBase {
+struct Sequencer : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "Sequencer";
     static constexpr bool kTimeDependent = false;
 
@@ -121,9 +121,9 @@ struct Sequencer : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float phase = ctx->input_values[0];
-        bool reset = ctx->input_values[1] > 0.5f;
+    void process_audio(const VividAudioContext* ctx) override {
+        float phase = ctx->input_float_values[0];
+        bool reset = ctx->input_float_values[1] > 0.5f;
 
         // Rising-edge reset: capture current phase as offset
         if (reset && !prev_reset_)
@@ -154,9 +154,9 @@ struct Sequencer : vivid::ControlOperatorBase {
         if (ratchet_trigger) prev_ratchet_index_ = ratchet_index;
 
         bool trigger = step_active_ && ratchet_trigger;
-        ctx->output_values[0] = value;
-        ctx->output_values[1] = static_cast<float>(step);
-        ctx->output_values[2] = trigger ? 1.0f : 0.0f;
+        ctx->output_float_values[0] = value;
+        ctx->output_float_values[1] = static_cast<float>(step);
+        ctx->output_float_values[2] = trigger ? 1.0f : 0.0f;
 
         // MIDI output: note-on on trigger, legato note-off before new note
         uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);

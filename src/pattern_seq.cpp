@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstdint>
 
-struct PatternSeq : vivid::ControlOperatorBase {
+struct PatternSeq : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "PatternSeq";
     static constexpr bool kTimeDependent = true;
 
@@ -61,8 +61,8 @@ struct PatternSeq : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float beat_phase = ctx->input_values[0];
+    void process_audio(const VividAudioContext* ctx) override {
+        float beat_phase = ctx->input_float_values[0];
         int n   = std::clamp(static_cast<int>(ctx->param_values[0]), 1, 16);
         int r   = std::clamp(static_cast<int>(ctx->param_values[1]), 0, 8);
         float gl = ctx->param_values[2];
@@ -104,10 +104,10 @@ struct PatternSeq : vivid::ControlOperatorBase {
         float trigger = (new_step && fires) ? 1.0f : 0.0f;
         float gate = (fires && step_phase < gl) ? 1.0f : 0.0f;
 
-        ctx->output_values[0] = out_value;
-        ctx->output_values[1] = trigger;
-        ctx->output_values[2] = gate;
-        ctx->output_values[3] = static_cast<float>(current_step);
+        ctx->output_float_values[0] = out_value;
+        ctx->output_float_values[1] = trigger;
+        ctx->output_float_values[2] = gate;
+        ctx->output_float_values[3] = static_cast<float>(current_step);
 
         // MIDI output: note-on on gate rising edge, note-off on falling edge
         uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);

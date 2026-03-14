@@ -114,7 +114,7 @@ inline bool hit_test(float mx, float my, float rx, float ry, float rw, float rh)
 
 } // namespace tracker_insp
 
-struct Tracker : vivid::ControlOperatorBase {
+struct Tracker : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "Tracker";
     static constexpr bool kTimeDependent = true;
 
@@ -156,9 +156,9 @@ struct Tracker : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float beat_phase = ctx->input_values[0];
-        bool reset_signal = ctx->input_values[1] > 0.5f;
+    void process_audio(const VividAudioContext* ctx) override {
+        float beat_phase = ctx->input_float_values[0];
+        bool reset_signal = ctx->input_float_values[1] > 0.5f;
 
         int r = std::clamp(static_cast<int>(ctx->param_values[0]), 0, 8);
         int spd = std::clamp(static_cast<int>(ctx->param_values[1]), 1, 16);
@@ -231,9 +231,9 @@ struct Tracker : vivid::ControlOperatorBase {
         int pat_idx = 0;
         if (current_order_ < song_.arrangement_length)
             pat_idx = song_.arrangement[current_order_];
-        ctx->output_values[3] = static_cast<float>(current_row_);
-        ctx->output_values[4] = static_cast<float>(pat_idx);
-        ctx->output_values[5] = static_cast<float>(current_order_);
+        ctx->output_float_values[3] = static_cast<float>(current_row_);
+        ctx->output_float_values[4] = static_cast<float>(pat_idx);
+        ctx->output_float_values[5] = static_cast<float>(current_order_);
 
         // MIDI output
         if (ctx->custom_outputs && ctx->custom_output_count > 0) {

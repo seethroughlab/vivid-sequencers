@@ -1,6 +1,6 @@
 #include "operator_api/operator.h"
 
-struct NoteDuration : vivid::ControlOperatorBase {
+struct NoteDuration : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "NoteDuration";
     static constexpr bool kTimeDependent = false;
 
@@ -18,7 +18,7 @@ struct NoteDuration : vivid::ControlOperatorBase {
         out.push_back({"duration_ms", VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
     }
 
-    void process(const VividProcessContext* ctx) override {
+    void process_audio(const VividAudioContext* ctx) override {
         static constexpr float kFactors[] = {
             4.0f,    // 1/1
             2.0f,    // 1/2
@@ -34,9 +34,9 @@ struct NoteDuration : vivid::ControlOperatorBase {
             0.167f,  // triplet 1/16
         };
 
-        float beat_ms = ctx->input_values[0];
+        float beat_ms = ctx->input_float_values[0];
         int idx = subdivision.int_value();
-        ctx->output_values[0] = beat_ms * kFactors[idx];
+        ctx->output_float_values[0] = beat_ms * kFactors[idx];
     }
 };
 

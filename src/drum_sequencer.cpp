@@ -23,7 +23,7 @@ static constexpr float kTabW = 80.0f;
 static constexpr float kTabH = 18.0f;
 } // namespace drum_insp
 
-struct DrumSequencer : vivid::ControlOperatorBase {
+struct DrumSequencer : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "DrumSequencer";
     static constexpr bool kTimeDependent = false;
 
@@ -592,9 +592,9 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float phase = ctx->input_values[0];
-        bool reset = ctx->input_values[1] > 0.5f;
+    void process_audio(const VividAudioContext* ctx) override {
+        float phase = ctx->input_float_values[0];
+        bool reset = ctx->input_float_values[1] > 0.5f;
 
         // Rising-edge reset: capture current phase as offset
         if (reset && !prev_reset_)
@@ -615,17 +615,17 @@ struct DrumSequencer : vivid::ControlOperatorBase {
 
         for (int d = 0; d < 6; ++d) {
             bool active = (step_changed && ctx->param_values[kDrumBase[d] + step] > 0.5f);
-            ctx->output_values[d] = active ? 1.0f : 0.0f;
+            ctx->output_float_values[d] = active ? 1.0f : 0.0f;
         }
-        ctx->output_values[6] = static_cast<float>(step);
+        ctx->output_float_values[6] = static_cast<float>(step);
 
         // Per-step modulation outputs (continuous — emitted every frame)
         static constexpr int kModABase[6] = { 104, 120, 136, 152, 168, 184 };
         static constexpr int kModBBase[6] = { 200, 216, 232, 248, 264, 280 };
 
         for (int d = 0; d < 6; ++d) {
-            ctx->output_values[7 + d]  = ctx->param_values[kModABase[d] + step];
-            ctx->output_values[13 + d] = ctx->param_values[kModBBase[d] + step];
+            ctx->output_float_values[7 + d]  = ctx->param_values[kModABase[d] + step];
+            ctx->output_float_values[13 + d] = ctx->param_values[kModBBase[d] + step];
         }
 
         // Pack all 6 drum tracks into fixed-length spread outputs.
@@ -643,7 +643,7 @@ struct DrumSequencer : vivid::ControlOperatorBase {
                 notes_sp.length = kNumDrums;
                 vels_sp.length  = kNumDrums;
                 for (int d = 0; d < kNumDrums; ++d) {
-                    gates_sp.data[d] = ctx->output_values[d];
+                    gates_sp.data[d] = ctx->output_float_values[d];
                     notes_sp.data[d] = static_cast<float>(ctx->param_values[kNoteBase + d]);
                     vels_sp.data[d]  = ctx->param_values[kModABase[d] + step];
                 }

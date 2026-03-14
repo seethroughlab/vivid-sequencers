@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-struct StateMachine : vivid::ControlOperatorBase {
+struct StateMachine : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "StateMachine";
     static constexpr bool kTimeDependent = false;
 
@@ -73,12 +73,12 @@ struct StateMachine : vivid::ControlOperatorBase {
         out.push_back({"xfade",    VIVID_PORT_FLOAT, VIVID_PORT_OUTPUT});
     }
 
-    void process(const VividProcessContext* ctx) override {
+    void process_audio(const VividAudioContext* ctx) override {
         // 1. Read inputs
-        float beat_phase = ctx->input_values[0];
-        float trigger_in = ctx->input_values[1];
-        float reset_in   = ctx->input_values[2];
-        float signal_in  = ctx->input_values[3];
+        float beat_phase = ctx->input_float_values[0];
+        float trigger_in = ctx->input_float_values[1];
+        float reset_in   = ctx->input_float_values[2];
+        float signal_in  = ctx->input_float_values[3];
 
         // 2. Read params
         int   num_states     = static_cast<int>(ctx->param_values[0]);
@@ -246,12 +246,12 @@ struct StateMachine : vivid::ControlOperatorBase {
         float trigger_out = transition_fired ? 1.0f : 0.0f;
 
         // 10. Write outputs
-        ctx->output_values[0] = state_out;
-        ctx->output_values[1] = progress_out;
-        ctx->output_values[2] = trigger_out;
-        ctx->output_values[3] = bar_out;
-        ctx->output_values[4] = beat_out;
-        ctx->output_values[5] = xfade_out;
+        ctx->output_float_values[0] = state_out;
+        ctx->output_float_values[1] = progress_out;
+        ctx->output_float_values[2] = trigger_out;
+        ctx->output_float_values[3] = bar_out;
+        ctx->output_float_values[4] = beat_out;
+        ctx->output_float_values[5] = xfade_out;
     }
 };
 

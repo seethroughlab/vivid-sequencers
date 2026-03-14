@@ -60,13 +60,13 @@
 
   "connections": [
     { "from": "clock1/beat_phase", "to": "sm1/beat_phase" },
-    { "from": "clock1/beat_phase", "to": "drums1/phase" },
+    { "from": "clock1/beat_phase", "to": "drums1/beat_phase" },
     { "from": "clock1/beat_phase", "to": "notes1/beat_phase" },
     { "from": "lfo1/value",        "to": "shape1/rotation" },
 
-    { "from": "drums1/kick",  "to": "kick1/phase" },
-    { "from": "drums1/snare", "to": "snare1/phase" },
-    { "from": "drums1/hat",   "to": "hat1/phase" },
+    { "from": "drums1/kick",  "to": "kick1/trigger" },
+    { "from": "drums1/snare", "to": "snare1/trigger" },
+    { "from": "drums1/hat",   "to": "hat1/trigger" },
 
     { "from": "notes1/notes",      "to": "synth1/notes" },
     { "from": "notes1/velocities", "to": "synth1/velocities" },

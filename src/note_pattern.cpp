@@ -17,7 +17,7 @@ static constexpr float kPreviewH = 60.0f;
 static constexpr float kLineH = 18.0f;
 } // namespace note_insp
 
-struct NotePattern : vivid::ControlOperatorBase {
+struct NotePattern : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "NotePattern";
     static constexpr bool kTimeDependent = true;
 
@@ -93,8 +93,8 @@ struct NotePattern : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float beat_phase = ctx->input_values[0];
+    void process_audio(const VividAudioContext* ctx) override {
+        float beat_phase = ctx->input_float_values[0];
         int num_steps = steps.int_value();
         int oct = octave.int_value();
         int bps = beats_per_step.int_value();
@@ -186,9 +186,9 @@ struct NotePattern : vivid::ControlOperatorBase {
 
         // Scalar fallback: first note
         if (chord_size > 0) {
-            ctx->output_values[0] = static_cast<float>(root + oct * 12 + intervals[0]);
-            ctx->output_values[1] = vel;
-            ctx->output_values[2] = gate_val;
+            ctx->output_float_values[0] = static_cast<float>(root + oct * 12 + intervals[0]);
+            ctx->output_float_values[1] = vel;
+            ctx->output_float_values[2] = gate_val;
         }
     }
 

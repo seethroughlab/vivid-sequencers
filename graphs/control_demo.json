@@ -15,7 +15,7 @@
     "gate1": { "type": "Gate", "params": { "threshold": 0.5 } }
   },
   "connections": [
-    { "from": "clock1/beat_phase", "to": "seq1/phase" },
+    { "from": "clock1/beat_phase", "to": "seq1/beat_phase" },
     { "from": "seq1/value",        "to": "smooth1/input" },
     { "from": "seq1/trigger",      "to": "random1/trigger" },
     { "from": "lfo1/value",        "to": "logic1/a" },

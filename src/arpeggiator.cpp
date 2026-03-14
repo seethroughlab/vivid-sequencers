@@ -7,7 +7,7 @@
 #include <cmath>
 #include <cstring>
 
-struct Arpeggiator : vivid::ControlOperatorBase {
+struct Arpeggiator : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "Arpeggiator";
     static constexpr bool kTimeDependent = true;
 
@@ -86,8 +86,8 @@ struct Arpeggiator : vivid::ControlOperatorBase {
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
-    void process(const VividProcessContext* ctx) override {
-        float beat_phase = ctx->input_values[0];
+    void process_audio(const VividAudioContext* ctx) override {
+        float beat_phase = ctx->input_float_values[0];
         int m = mode.int_value();
         int oct = octaves.int_value();
         int r = rate.int_value();
@@ -437,7 +437,7 @@ private:
         }
     }
 
-    void write_output(const VividProcessContext* ctx, float note, float vel, float gate, int step) {
+    void write_output(const VividAudioContext* ctx, float note, float vel, float gate, int step) {
         if (ctx->output_spreads) {
             auto& notes_sp = ctx->output_spreads[0];
             auto& vel_sp   = ctx->output_spreads[1];
@@ -453,10 +453,10 @@ private:
             }
         }
 
-        ctx->output_values[0] = note;
-        ctx->output_values[1] = vel;
-        ctx->output_values[2] = gate;
-        ctx->output_values[3] = static_cast<float>(step);
+        ctx->output_float_values[0] = note;
+        ctx->output_float_values[1] = vel;
+        ctx->output_float_values[2] = gate;
+        ctx->output_float_values[3] = static_cast<float>(step);
 
         // MIDI output: note-on on gate rising edge, note-off on falling edge
         uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);
