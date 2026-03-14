@@ -134,6 +134,10 @@ struct Tracker : vivid::ControlOperatorBase {
         out.push_back(&speed);          // 1
         out.push_back(&base_channel);   // 2
         out.push_back(&channel_mode);   // 3
+        display_hint(edit_pattern, VIVID_DISPLAY_HIDDEN);
+        display_hint(edit_channel, VIVID_DISPLAY_HIDDEN);
+        display_hint(mute_mask,    VIVID_DISPLAY_HIDDEN);
+        display_hint(pattern_data, VIVID_DISPLAY_HIDDEN);
         out.push_back(&edit_pattern);   // 4
         out.push_back(&edit_channel);   // 5
         out.push_back(&mute_mask);      // 6
@@ -205,11 +209,10 @@ struct Tracker : vivid::ControlOperatorBase {
 
         // Write spread outputs
         if (ctx->output_spreads) {
-            // Spread port indices: notes=2, velocities=3, gates=4
-            // (port indices count inputs+outputs in declaration order)
-            auto& notes_sp = ctx->output_spreads[2];
-            auto& vels_sp  = ctx->output_spreads[3];
-            auto& gates_sp = ctx->output_spreads[4];
+            // Output port indices are per-direction: notes=0, velocities=1, gates=2
+            auto& notes_sp = ctx->output_spreads[0];
+            auto& vels_sp  = ctx->output_spreads[1];
+            auto& gates_sp = ctx->output_spreads[2];
 
             if (notes_sp.capacity >= tracker::MAX_CHANNELS) {
                 notes_sp.length = tracker::MAX_CHANNELS;
@@ -218,7 +221,7 @@ struct Tracker : vivid::ControlOperatorBase {
                 for (int ch = 0; ch < tracker::MAX_CHANNELS; ++ch) {
                     bool muted = (mute >> ch) & 1;
                     notes_sp.data[ch] = channels_[ch].current_pitch;
-                    vels_sp.data[ch]  = muted ? 0.0f : static_cast<float>(channels_[ch].current_velocity);
+                    vels_sp.data[ch]  = muted ? 0.0f : static_cast<float>(channels_[ch].current_velocity) / 127.0f;
                     gates_sp.data[ch] = (channels_[ch].gate_active && !muted) ? 1.0f : 0.0f;
                 }
             }
@@ -228,9 +231,9 @@ struct Tracker : vivid::ControlOperatorBase {
         int pat_idx = 0;
         if (current_order_ < song_.arrangement_length)
             pat_idx = song_.arrangement[current_order_];
-        ctx->output_values[0] = static_cast<float>(current_row_);
-        ctx->output_values[1] = static_cast<float>(pat_idx);
-        ctx->output_values[2] = static_cast<float>(current_order_);
+        ctx->output_values[3] = static_cast<float>(current_row_);
+        ctx->output_values[4] = static_cast<float>(pat_idx);
+        ctx->output_values[5] = static_cast<float>(current_order_);
 
         // MIDI output
         if (ctx->custom_outputs && ctx->custom_output_count > 0) {
@@ -252,10 +255,10 @@ struct Tracker : vivid::ControlOperatorBase {
         }
 
         // Draw a simplified tracker grid view
-        // Current row from output[0]
+        // Current row from output port index 3 ("row")
         int cur_row = -1;
-        if (ctx->output_count > 0)
-            cur_row = static_cast<int>(ctx->output_values[0]);
+        if (ctx->output_count > 3)
+            cur_row = static_cast<int>(ctx->output_values[3]);
 
         // Parse song for thumbnail
         tracker::TrackerSong thumb_song;
@@ -266,8 +269,8 @@ struct Tracker : vivid::ControlOperatorBase {
         if (!has_data) return;
 
         int pat_idx = 0;
-        if (ctx->output_count > 1)
-            pat_idx = std::clamp(static_cast<int>(ctx->output_values[1]), 0, thumb_song.num_patterns - 1);
+        if (ctx->output_count > 4)
+            pat_idx = std::clamp(static_cast<int>(ctx->output_values[4]), 0, thumb_song.num_patterns - 1);
 
         const auto& pat = thumb_song.patterns[pat_idx];
         int nr = pat.num_rows;
@@ -355,9 +358,9 @@ struct Tracker : vivid::ControlOperatorBase {
                 has_data = tracker::deserialize_song(std::string(pd), disp_song);
         }
 
-        // Playback state from outputs: row=out[0], pattern=out[1], order=out[2]
-        int playback_row = (ctx->output_count > 0) ? static_cast<int>(ctx->output_values[0]) : -1;
-        int playback_pat = (ctx->output_count > 1) ? static_cast<int>(ctx->output_values[1]) : -1;
+        // Playback state from outputs: row=out[3], pattern=out[4], order=out[5]
+        int playback_row = (ctx->output_count > 3) ? static_cast<int>(ctx->output_values[3]) : -1;
+        int playback_pat = (ctx->output_count > 4) ? static_cast<int>(ctx->output_values[4]) : -1;
 
         // --- Process key events ---
         for (uint32_t ki = 0; ki < ctx->key_event_count; ++ki) {
@@ -735,7 +738,7 @@ struct Tracker : vivid::ControlOperatorBase {
             draw.draw_text(draw.opaque, px, py, "Arrangement", dim07, 1.0f);
             py += ti::kLineH;
 
-            int current_order = (ctx->output_count > 2) ? static_cast<int>(ctx->output_values[2]) : -1;
+            int current_order = (ctx->output_count > 5) ? static_cast<int>(ctx->output_values[5]) : -1;
 
             float item_h = ti::kLineH;
             float list_h = std::min(static_cast<int>(disp_song.arrangement_length), 16) * item_h;

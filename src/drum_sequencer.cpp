@@ -363,6 +363,9 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&steps);   // 0
         out.push_back(&swing);   // 1
 
+        // Hide note/grid/mod params — rendered by custom inspector
+        size_t hidden_start = out.size();
+
         // Note params: 2..7
         out.push_back(&kick_note);
         out.push_back(&snare_note);
@@ -550,6 +553,9 @@ struct DrumSequencer : vivid::ControlOperatorBase {
         out.push_back(&tom_mb_10); out.push_back(&tom_mb_11);
         out.push_back(&tom_mb_12); out.push_back(&tom_mb_13);
         out.push_back(&tom_mb_14); out.push_back(&tom_mb_15);
+
+        for (size_t i = hidden_start; i < out.size(); ++i)
+            out[i]->display_hint = VIVID_DISPLAY_HIDDEN;
 
         out.push_back(&midi_channel); // 296
     }

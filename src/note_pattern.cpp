@@ -66,6 +66,8 @@ struct NotePattern : vivid::ControlOperatorBase {
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&steps);
+        // Hide step params — rendered by custom inspector
+        size_t hidden_start = out.size();
         out.push_back(&root_0); out.push_back(&root_1);
         out.push_back(&root_2); out.push_back(&root_3);
         out.push_back(&root_4); out.push_back(&root_5);
@@ -74,6 +76,8 @@ struct NotePattern : vivid::ControlOperatorBase {
         out.push_back(&type_2); out.push_back(&type_3);
         out.push_back(&type_4); out.push_back(&type_5);
         out.push_back(&type_6); out.push_back(&type_7);
+        for (size_t i = hidden_start; i < out.size(); ++i)
+            out[i]->display_hint = VIVID_DISPLAY_HIDDEN;
         out.push_back(&octave);
         out.push_back(&beats_per_step);
         out.push_back(&gate_length);
