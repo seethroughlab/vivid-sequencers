@@ -603,7 +603,21 @@ struct DrumSequencer : vivid::AudioOperatorBase {
 
         float adj_phase = std::fmod(phase - phase_offset_ + 1.0f, 1.0f);
         int n = std::max(steps.int_value(), 1);
-        int step = static_cast<int>(adj_phase * n);
+
+        // Apply swing: stretch even steps, compress odd steps within each pair.
+        // swing 0.0 = straight; 0.5 = heavy triplet feel (~83/17 split).
+        float sw = swing.value;
+        float scaled = adj_phase * n;                 // 0..n continuous
+        int pair = static_cast<int>(scaled) / 2;      // which pair (0,1), (2,3), ...
+        float pair_phase = scaled - pair * 2.0f;      // 0..2 within the pair
+        float boundary = 1.0f + sw * 1.333f;          // even step stretches up to ~1.67 at max
+
+        int step;
+        if (pair_phase >= boundary) {
+            step = pair * 2 + 1;
+        } else {
+            step = pair * 2;
+        }
         step = std::clamp(step, 0, n - 1);
 
         bool step_changed = (step != prev_step_);

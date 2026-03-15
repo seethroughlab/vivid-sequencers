@@ -1,9 +1,10 @@
 #include "runtime/operator_registry.h"
 #include "runtime/graph.h"
 #include "runtime/scheduler.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -19,8 +20,8 @@ static void check(bool cond, const char* msg) {
     }
 }
 
-static void check_float(float actual, float expected, const char* msg) {
-    if (std::fabs(actual - expected) > 1e-4f) {
+static void check_float(float actual, float expected, const char* msg, float tol = 1e-4f) {
+    if (std::fabs(actual - expected) > tol) {
         std::fprintf(stderr, "  FAIL: %s (expected %f, got %f)\n", msg, expected, actual);
         failures++;
     } else {
@@ -28,9 +29,124 @@ static void check_float(float actual, float expected, const char* msg) {
     }
 }
 
-// =====================================================================
-// Test Euclidean algorithm by building a graph and reading spread output
-// =====================================================================
+struct AudioOpHarness {
+    vivid::OperatorLoader* loader = nullptr;
+    void* instance = nullptr;
+    const VividOperatorDescriptor* desc = nullptr;
+    std::vector<float> params;
+    std::vector<float> input_floats;
+    std::vector<float> output_floats;
+    std::vector<VividSpreadPort> input_spreads;
+    std::vector<VividSpreadPort> output_spreads;
+    std::vector<std::vector<float>> input_spread_storage;
+    std::vector<std::vector<float>> output_spread_storage;
+    std::vector<void*> custom_inputs;
+    std::vector<void*> custom_outputs;
+
+    explicit AudioOpHarness(vivid::OperatorLoader* in_loader, uint32_t spread_capacity = 32)
+        : loader(in_loader) {
+        desc = loader ? loader->descriptor() : nullptr;
+        instance = loader ? loader->create_instance() : nullptr;
+        if (!desc || !instance) {
+            return;
+        }
+
+        params.resize(desc->param_count);
+        for (uint32_t i = 0; i < desc->param_count; ++i) {
+            params[i] = desc->params[i].default_value;
+        }
+
+        uint32_t float_inputs = 0;
+        uint32_t float_outputs = 0;
+        uint32_t custom_input_count = 0;
+        uint32_t custom_output_count = 0;
+        for (uint32_t i = 0; i < desc->port_count; ++i) {
+            const auto& port = desc->ports[i];
+            if (port.type == VIVID_PORT_FLOAT) {
+                if (port.direction == VIVID_PORT_INPUT) {
+                    ++float_inputs;
+                } else {
+                    ++float_outputs;
+                }
+            }
+            if (port.transport == VIVID_PORT_TRANSPORT_CUSTOM_REF ||
+                port.transport == VIVID_PORT_TRANSPORT_CUSTOM_VALUE) {
+                if (port.direction == VIVID_PORT_INPUT) {
+                    ++custom_input_count;
+                } else {
+                    ++custom_output_count;
+                }
+            }
+        }
+
+        input_floats.assign(float_inputs, 0.0f);
+        output_floats.assign(float_outputs, 0.0f);
+
+        input_spreads.resize(desc->port_count);
+        output_spreads.resize(desc->port_count);
+        input_spread_storage.resize(desc->port_count);
+        output_spread_storage.resize(desc->port_count);
+        for (uint32_t i = 0; i < desc->port_count; ++i) {
+            input_spread_storage[i].assign(spread_capacity, 0.0f);
+            output_spread_storage[i].assign(spread_capacity, 0.0f);
+            input_spreads[i] = {input_spread_storage[i].data(), 0u, spread_capacity};
+            output_spreads[i] = {output_spread_storage[i].data(), 0u, spread_capacity};
+        }
+
+        custom_inputs.assign(custom_input_count, nullptr);
+        custom_outputs.assign(custom_output_count, nullptr);
+    }
+
+    ~AudioOpHarness() {
+        if (loader && instance) {
+            loader->destroy_instance(instance);
+        }
+    }
+
+    int param_index(const char* name) const {
+        for (uint32_t i = 0; i < desc->param_count; ++i) {
+            if (std::strcmp(desc->params[i].name, name) == 0) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    void set_param(const char* name, float value) {
+        int idx = param_index(name);
+        if (idx >= 0) {
+            params[static_cast<size_t>(idx)] = value;
+        }
+    }
+
+    void process(uint64_t frame = 0) {
+        VividAudioContext ctx{};
+        ctx.time = 0.0;
+        ctx.delta_time = 0.016;
+        ctx.frame = frame;
+        ctx.param_values = params.data();
+        ctx.input_buffers = nullptr;
+        ctx.output_buffers = nullptr;
+        ctx.buffer_size = 0;
+        ctx.sample_rate = 48000;
+        ctx.input_channel_counts = nullptr;
+        ctx.output_channel_counts = nullptr;
+        ctx.input_spreads = input_spreads.data();
+        ctx.output_spreads = output_spreads.data();
+        ctx.custom_inputs = custom_inputs.empty() ? nullptr : custom_inputs.data();
+        ctx.custom_input_count = static_cast<uint32_t>(custom_inputs.size());
+        ctx.input_string_values = nullptr;
+        ctx.input_float_values = input_floats.empty() ? nullptr : input_floats.data();
+        ctx.output_float_values = output_floats.empty() ? nullptr : output_floats.data();
+        ctx.custom_outputs = custom_outputs.empty() ? nullptr : custom_outputs.data();
+        ctx.custom_output_count = static_cast<uint32_t>(custom_outputs.size());
+        ctx.file_param_values = nullptr;
+        ctx.file_param_count = 0;
+        ctx.shared_handles = nullptr;
+        loader->process_audio(instance, &ctx);
+    }
+};
+
 static void test_euclidean(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== Euclidean Algorithm Tests ===\n");
 
@@ -42,7 +158,7 @@ static void test_euclidean(vivid::OperatorRegistry& registry) {
             {"steps", static_cast<float>(steps)},
             {"rotation", static_cast<float>(rotation)},
             {"gate_length", 0.5f},
-            {"rate", 2.0f}  // 1/4
+            {"rate", 2.0f}
         });
 
         vivid::Scheduler sched;
@@ -58,7 +174,6 @@ static void test_euclidean(vivid::OperatorRegistry& registry) {
         check(node != nullptr, label);
         if (!node) { sched.shutdown(); return; }
 
-        // Pattern is output port 3 (trigger=0, gate=1, step=2, pattern=3)
         auto& spread = node->output_spreads[3];
         char buf[256];
         std::snprintf(buf, sizeof(buf), "%s: spread length = %d (expected %d)",
@@ -84,237 +199,164 @@ static void test_euclidean(vivid::OperatorRegistry& registry) {
         sched.shutdown();
     };
 
-    // Classic Euclidean rhythms
     run_euclidean(3, 8, 0, {1,0,0,1,0,0,1,0}, "E(3,8)");
     run_euclidean(4, 8, 0, {1,0,1,0,1,0,1,0}, "E(4,8)");
     run_euclidean(5, 8, 0, {1,0,1,1,0,1,1,0}, "E(5,8)");
-
-    // Edge cases
     run_euclidean(0, 8, 0, {0,0,0,0,0,0,0,0}, "E(0,8) all zeros");
     run_euclidean(8, 8, 0, {1,1,1,1,1,1,1,1}, "E(8,8) all ones");
-
-    // Rotation: E(3,8) rotated by 1 shifts pattern left
-    // Original: [1,0,0,1,0,0,1,0]
-    // Rotate 1: [0,0,1,0,0,1,0,1]
     run_euclidean(3, 8, 1, {0,0,1,0,0,1,0,1}, "E(3,8) rot=1");
 }
 
-// =====================================================================
-// Test PatternSeq: beat-driven stepping and value output
-// =====================================================================
 static void test_pattern_seq(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== PatternSeq Tests ===\n");
 
-    // Test basic step advancement using a source node to drive beat_phase
+    auto* loader = registry.find("PatternSeq");
+    check(loader != nullptr, "PatternSeq loader found");
+    if (!loader) return;
+
     {
-        vivid::Graph g;
-        // SpreadSourceOp outputs param_values[0] (base) as its scalar output
-        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
-        g.add_node("seq", "PatternSeq", {
-            {"steps", 4.0f},
-            {"rate", 2.0f},   // 1/4 note (multiplier=1.0)
-            {"gate_length", 0.8f},
-            {"probability", 1.0f},
-            {"val_0", 10.0f},
-            {"val_1", 20.0f},
-            {"val_2", 30.0f},
-            {"val_3", 40.0f}
-        });
-        g.add_connection("phase_src", "out", "seq", "beat_phase");
+        AudioOpHarness op(loader);
+        op.set_param("steps", 4.0f);
+        op.set_param("rate", 2.0f);
+        op.set_param("gate_length", 0.8f);
+        op.set_param("probability", 1.0f);
+        op.set_param("val_0", 10.0f);
+        op.set_param("val_1", 20.0f);
+        op.set_param("val_2", 30.0f);
+        op.set_param("val_3", 40.0f);
 
-        vivid::Scheduler sched;
-        check(sched.build(g, registry), "PatternSeq build");
+        op.input_floats[0] = 0.0f;
+        op.process(0);
+        check_float(op.output_floats[0], 10.0f, "seq step 0: value=10");
+        check_float(op.output_floats[1], 1.0f, "seq step 0: trigger=1");
+        check_float(op.output_floats[3], 0.0f, "seq step 0: step index=0");
 
-        auto* src = sched.find_node_mut("phase_src");
-        auto* node = sched.find_node_mut("seq");
-        check(node != nullptr, "PatternSeq node found");
-        if (!node || !src) { sched.shutdown(); return; }
+        op.input_floats[0] = 0.99f;
+        op.process(1);
+        check_float(op.output_floats[1], 0.0f, "seq no retrigger within beat");
 
-        // Tick at beat_phase=0.0 → step 0
-        src->param_values[0] = 0.0f;
-        sched.tick(0.0, 0.016, 0);
-        check_float(node->output_values[0], 10.0f, "seq step 0: value=10");
-        check_float(node->output_values[3], 0.0f, "seq step 0: step index=0");
+        op.input_floats[0] = 0.01f;
+        op.process(2);
+        check_float(op.output_floats[3], 1.0f, "seq after 1 beat: step=1");
+        check_float(op.output_floats[0], 20.0f, "seq step 1: value=20");
+        check_float(op.output_floats[1], 1.0f, "seq step 1: trigger=1");
 
-        // Advance to near end of beat
-        src->param_values[0] = 0.99f;
-        sched.tick(0.016, 0.016, 1);
-
-        // Wrap to start of beat 1
-        src->param_values[0] = 0.01f;
-        sched.tick(0.032, 0.016, 2);
-        check_float(node->output_values[3], 1.0f, "seq after 1 beat: step=1");
-        check_float(node->output_values[0], 20.0f, "seq step 1: value=20");
-
-        // Verify spread output (output port 4 = pattern)
-        auto& spread = node->output_spreads[4];
-        check(spread.size() == 4, "seq spread has 4 elements");
-        if (spread.size() == 4) {
-            check_float(spread[0], 10.0f, "seq spread[0]=10");
-            check_float(spread[1], 20.0f, "seq spread[1]=20");
-            check_float(spread[2], 30.0f, "seq spread[2]=30");
-            check_float(spread[3], 40.0f, "seq spread[3]=40");
+        auto& spread = op.output_spreads[4];
+        check(spread.length == 4, "seq spread has 4 elements");
+        if (spread.length == 4) {
+            check_float(spread.data[0], 10.0f, "seq spread[0]=10");
+            check_float(spread.data[1], 20.0f, "seq spread[1]=20");
+            check_float(spread.data[2], 30.0f, "seq spread[2]=30");
+            check_float(spread.data[3], 40.0f, "seq spread[3]=40");
         }
-
-        sched.shutdown();
     }
 
-    // Test probability=0.0 silences all
     {
-        vivid::Graph g;
-        g.add_node("seq", "PatternSeq", {
-            {"steps", 4.0f},
-            {"rate", 2.0f},
-            {"gate_length", 0.8f},
-            {"probability", 0.0f},
-            {"val_0", 10.0f},
-            {"val_1", 20.0f},
-            {"val_2", 30.0f},
-            {"val_3", 40.0f}
-        });
+        AudioOpHarness op(loader);
+        op.set_param("steps", 4.0f);
+        op.set_param("rate", 2.0f);
+        op.set_param("gate_length", 0.8f);
+        op.set_param("probability", 0.0f);
+        op.set_param("val_0", 10.0f);
+        op.set_param("val_1", 20.0f);
+        op.set_param("val_2", 30.0f);
+        op.set_param("val_3", 40.0f);
 
-        vivid::Scheduler sched;
-        check(sched.build(g, registry), "PatternSeq prob=0 build");
-        sched.tick(0.0, 0.016, 0);
-
-        auto* node = sched.find_node_mut("seq");
-        check_float(node->output_values[0], 0.0f, "seq prob=0: value=0 (silenced)");
-        check_float(node->output_values[2], 0.0f, "seq prob=0: gate=0");
-        sched.shutdown();
+        op.input_floats[0] = 0.0f;
+        op.process(0);
+        check_float(op.output_floats[0], 0.0f, "seq prob=0: value=0 (silenced)");
+        check_float(op.output_floats[1], 0.0f, "seq prob=0: trigger=0");
+        check_float(op.output_floats[2], 0.0f, "seq prob=0: gate=0");
     }
 }
 
-// =====================================================================
-// Test Sequencer: baseline trigger, per-step probability, and ratchets
-// =====================================================================
 static void test_sequencer(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== Sequencer Tests ===\n");
 
-    // Baseline behavior: ratchet=1 should trigger only when step changes.
+    auto* loader = registry.find("Sequencer");
+    check(loader != nullptr, "Sequencer loader found");
+    if (!loader) return;
+
     {
-        vivid::Graph g;
-        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
-        g.add_node("seq", "Sequencer", {
-            {"steps", 4.0f},
-            {"val_0", 10.0f},
-            {"val_1", 20.0f},
-            {"val_2", 30.0f},
-            {"val_3", 40.0f}
-        });
-        g.add_connection("phase_src", "out", "seq", "phase");
+        AudioOpHarness op(loader);
+        op.set_param("steps", 4.0f);
+        op.set_param("val_0", 10.0f);
+        op.set_param("val_1", 20.0f);
+        op.set_param("val_2", 30.0f);
+        op.set_param("val_3", 40.0f);
 
-        vivid::Scheduler sched;
-        check(sched.build(g, registry), "Sequencer baseline build");
-        auto* src = sched.find_node_mut("phase_src");
-        auto* seq = sched.find_node_mut("seq");
-        check(src != nullptr, "Sequencer baseline source found");
-        check(seq != nullptr, "Sequencer baseline node found");
-        if (!src || !seq) { sched.shutdown(); return; }
+        op.input_floats[0] = 0.00f;
+        op.input_floats[1] = 0.0f;
+        op.process(0);
+        check_float(op.output_floats[1], 0.0f, "baseline step=0");
+        check_float(op.output_floats[0], 10.0f, "baseline value step0");
+        check_float(op.output_floats[2], 1.0f, "baseline trigger on first step");
 
-        src->param_values[0] = 0.00f;
-        sched.tick(0.0, 0.016, 0);
-        check_float(seq->output_values[1], 0.0f, "baseline step=0");
-        check_float(seq->output_values[0], 10.0f, "baseline value step0");
-        check_float(seq->output_values[2], 1.0f, "baseline trigger on first step");
+        op.input_floats[0] = 0.10f;
+        op.process(1);
+        check_float(op.output_floats[2], 0.0f, "baseline no retrigger within step");
 
-        src->param_values[0] = 0.10f;
-        sched.tick(0.016, 0.016, 1);
-        check_float(seq->output_values[2], 0.0f, "baseline no retrigger within step");
-
-        src->param_values[0] = 0.30f; // step 1
-        sched.tick(0.032, 0.016, 2);
-        check_float(seq->output_values[1], 1.0f, "baseline step=1");
-        check_float(seq->output_values[0], 20.0f, "baseline value step1");
-        check_float(seq->output_values[2], 1.0f, "baseline trigger on step change");
-        sched.shutdown();
+        op.input_floats[0] = 0.30f;
+        op.process(2);
+        check_float(op.output_floats[1], 1.0f, "baseline step=1");
+        check_float(op.output_floats[0], 20.0f, "baseline value step1");
+        check_float(op.output_floats[2], 1.0f, "baseline trigger on step change");
     }
 
-    // Probability: prob_1=0 should silence and suppress trigger on step 1.
     {
-        vivid::Graph g;
-        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
-        g.add_node("seq", "Sequencer", {
-            {"steps", 4.0f},
-            {"val_0", 10.0f},
-            {"val_1", 20.0f},
-            {"prob_1", 0.0f}
-        });
-        g.add_connection("phase_src", "out", "seq", "phase");
+        AudioOpHarness op(loader);
+        op.set_param("steps", 4.0f);
+        op.set_param("val_0", 10.0f);
+        op.set_param("val_1", 20.0f);
+        op.set_param("prob_1", 0.0f);
 
-        vivid::Scheduler sched;
-        check(sched.build(g, registry), "Sequencer probability build");
-        auto* src = sched.find_node_mut("phase_src");
-        auto* seq = sched.find_node_mut("seq");
-        check(src != nullptr, "Sequencer probability source found");
-        check(seq != nullptr, "Sequencer probability node found");
-        if (!src || !seq) { sched.shutdown(); return; }
+        op.input_floats[0] = 0.00f;
+        op.process(0);
+        op.input_floats[0] = 0.30f;
+        op.process(1);
 
-        src->param_values[0] = 0.00f; // step 0
-        sched.tick(0.0, 0.016, 0);
-        src->param_values[0] = 0.30f; // step 1
-        sched.tick(0.016, 0.016, 1);
-
-        check_float(seq->output_values[1], 1.0f, "probability test step=1");
-        check_float(seq->output_values[0], 0.0f, "probability test value silenced");
-        check_float(seq->output_values[2], 0.0f, "probability test trigger suppressed");
-        sched.shutdown();
+        check_float(op.output_floats[1], 1.0f, "probability test step=1");
+        check_float(op.output_floats[0], 0.0f, "probability test value silenced");
+        check_float(op.output_floats[2], 0.0f, "probability test trigger suppressed");
     }
 
-    // Ratchet: one step with ratchet_0=4 should emit four triggers across the phase.
     {
-        vivid::Graph g;
-        g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
-        g.add_node("seq", "Sequencer", {
-            {"steps", 1.0f},
-            {"val_0", 11.0f},
-            {"ratchet_0", 4.0f}
-        });
-        g.add_connection("phase_src", "out", "seq", "phase");
+        AudioOpHarness op(loader);
+        op.set_param("steps", 1.0f);
+        op.set_param("val_0", 11.0f);
+        op.set_param("ratchet_0", 4.0f);
 
-        vivid::Scheduler sched;
-        check(sched.build(g, registry), "Sequencer ratchet build");
-        auto* src = sched.find_node_mut("phase_src");
-        auto* seq = sched.find_node_mut("seq");
-        check(src != nullptr, "Sequencer ratchet source found");
-        check(seq != nullptr, "Sequencer ratchet node found");
-        if (!src || !seq) { sched.shutdown(); return; }
+        op.input_floats[0] = 0.01f;
+        op.process(0);
+        check_float(op.output_floats[2], 1.0f, "ratchet trigger bucket 0");
 
-        src->param_values[0] = 0.01f; // bucket 0
-        sched.tick(0.0, 0.016, 0);
-        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 0");
+        op.input_floats[0] = 0.12f;
+        op.process(1);
+        check_float(op.output_floats[2], 0.0f, "ratchet no retrigger within bucket");
 
-        src->param_values[0] = 0.12f; // still bucket 0
-        sched.tick(0.016, 0.016, 1);
-        check_float(seq->output_values[2], 0.0f, "ratchet no retrigger within bucket");
+        op.input_floats[0] = 0.26f;
+        op.process(2);
+        check_float(op.output_floats[2], 1.0f, "ratchet trigger bucket 1");
 
-        src->param_values[0] = 0.26f; // bucket 1
-        sched.tick(0.032, 0.016, 2);
-        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 1");
+        op.input_floats[0] = 0.51f;
+        op.process(3);
+        check_float(op.output_floats[2], 1.0f, "ratchet trigger bucket 2");
 
-        src->param_values[0] = 0.51f; // bucket 2
-        sched.tick(0.048, 0.016, 3);
-        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 2");
-
-        src->param_values[0] = 0.76f; // bucket 3
-        sched.tick(0.064, 0.016, 4);
-        check_float(seq->output_values[2], 1.0f, "ratchet trigger bucket 3");
-        check_float(seq->output_values[0], 11.0f, "ratchet keeps step value");
-        sched.shutdown();
+        op.input_floats[0] = 0.76f;
+        op.process(4);
+        check_float(op.output_floats[2], 1.0f, "ratchet trigger bucket 3");
+        check_float(op.output_floats[0], 11.0f, "ratchet keeps step value");
     }
 }
 
-// =====================================================================
-// Test Stack: Concat and Interleave modes
-// =====================================================================
 static void test_stack(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== Stack Tests ===\n");
 
-    // Test Concat: [1,2,3] + [2,4] = [1,2,3,2,4]
     {
         vivid::Graph g;
         g.add_node("src_a", "SpreadSourceOp", {{"base", 1.0f}, {"count", 3.0f}});
         g.add_node("src_b", "SpreadSourceOp", {{"base", 2.0f}, {"count", 2.0f}});
-        g.add_node("stk", "Stack", {{"mode", 0.0f}});  // Concat
+        g.add_node("stk", "Stack", {{"mode", 0.0f}});
         g.add_connection("src_a", "out", "stk", "a");
         g.add_connection("src_b", "out", "stk", "b");
 
@@ -326,9 +368,6 @@ static void test_stack(vivid::OperatorRegistry& registry) {
         check(stk != nullptr, "Stack node found");
         if (!stk) { sched.shutdown(); return; }
 
-        // SpreadSourceOp(base=1,count=3) → [1,2,3]
-        // SpreadSourceOp(base=2,count=2) → [2,4]
-        // Concat: [1,2,3,2,4]
         auto& out = stk->output_spreads[0];
         check(out.size() == 5, "Concat: 3+2=5 elements");
         if (out.size() == 5) {
@@ -341,12 +380,11 @@ static void test_stack(vivid::OperatorRegistry& registry) {
         sched.shutdown();
     }
 
-    // Test Interleave: [1,2,3] + [2,4,6] = [1,2,2,4,3,6]
     {
         vivid::Graph g;
         g.add_node("src_a", "SpreadSourceOp", {{"base", 1.0f}, {"count", 3.0f}});
         g.add_node("src_b", "SpreadSourceOp", {{"base", 2.0f}, {"count", 3.0f}});
-        g.add_node("stk", "Stack", {{"mode", 1.0f}});  // Interleave
+        g.add_node("stk", "Stack", {{"mode", 1.0f}});
         g.add_connection("src_a", "out", "stk", "a");
         g.add_connection("src_b", "out", "stk", "b");
 
@@ -371,7 +409,6 @@ static void test_stack(vivid::OperatorRegistry& registry) {
         sched.shutdown();
     }
 
-    // Test empty inputs skipped
     {
         vivid::Graph g;
         g.add_node("src_a", "SpreadSourceOp", {{"base", 5.0f}, {"count", 2.0f}});
@@ -393,9 +430,6 @@ static void test_stack(vivid::OperatorRegistry& registry) {
     }
 }
 
-// =====================================================================
-// Test Alternate: cycles between spread inputs
-// =====================================================================
 static void test_alternate(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== Alternate Tests ===\n");
 
@@ -403,7 +437,7 @@ static void test_alternate(vivid::OperatorRegistry& registry) {
     g.add_node("phase_src", "SpreadSourceOp", {{"base", 0.0f}, {"count", 1.0f}});
     g.add_node("src_a", "SpreadSourceOp", {{"base", 1.0f}, {"count", 2.0f}});
     g.add_node("src_b", "SpreadSourceOp", {{"base", 10.0f}, {"count", 2.0f}});
-    g.add_node("alt", "Alternate", {{"cycle", 0.0f}});  // Beat
+    g.add_node("alt", "Alternate", {{"cycle", 0.0f}});
     g.add_connection("phase_src", "out", "alt", "beat_phase");
     g.add_connection("src_a", "out", "alt", "a");
     g.add_connection("src_b", "out", "alt", "b");
@@ -416,7 +450,6 @@ static void test_alternate(vivid::OperatorRegistry& registry) {
     check(alt != nullptr, "Alternate node found");
     if (!alt || !src) { sched.shutdown(); return; }
 
-    // Beat 0: phase=0.0 → active=(0/1)%2=0 → input a → [1,2]
     src->param_values[0] = 0.0f;
     sched.tick(0.0, 0.016, 0);
 
@@ -427,13 +460,11 @@ static void test_alternate(vivid::OperatorRegistry& registry) {
         check_float(out[1], 2.0f, "alt beat 0: [1]=2 (from a)");
     }
 
-    // Simulate beat wrap: advance to 0.99 then wrap to 0.01
     src->param_values[0] = 0.99f;
     sched.tick(0.016, 0.016, 1);
     src->param_values[0] = 0.01f;
     sched.tick(0.032, 0.016, 2);
 
-    // Beat 1: active=(1/1)%2=1 → input b → [10,20]
     auto& out2 = alt->output_spreads[0];
     check(out2.size() == 2, "alt beat 1: 2 elements");
     if (out2.size() >= 2) {
@@ -444,9 +475,6 @@ static void test_alternate(vivid::OperatorRegistry& registry) {
     sched.shutdown();
 }
 
-// =====================================================================
-// Test PatTransform: individual and combined transforms
-// =====================================================================
 static void test_pat_transform(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== PatTransform Tests ===\n");
 
@@ -456,9 +484,7 @@ static void test_pat_transform(vivid::OperatorRegistry& registry) {
                              const std::vector<float>& expected,
                              const char* label) {
         vivid::Graph g;
-        g.add_node("src", "SpreadSourceOp", {
-            {"base", base}, {"count", static_cast<float>(count)}
-        });
+        g.add_node("src", "SpreadSourceOp", {{"base", base}, {"count", static_cast<float>(count)}});
         g.add_node("pt", "PatTransform", {
             {"reverse", reverse},
             {"rotate", rotate},
@@ -505,35 +531,18 @@ static void test_pat_transform(vivid::OperatorRegistry& registry) {
         sched.shutdown();
     };
 
-    // SpreadSourceOp(base=1, count=3) produces [1, 2, 3]
-
-    // Reverse [1,2,3] = [3,2,1]
     run_transform(1.0f, 3, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f,
                   {3.0f, 2.0f, 1.0f}, "Reverse [1,2,3]");
-
-    // Rotate [1,2,3,4] by 1 = [2,3,4,1]
     run_transform(1.0f, 4, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f,
                   {2.0f, 3.0f, 4.0f, 1.0f}, "Rotate [1,2,3,4] by 1");
-
-    // Scale by 2.0: [1,2,3] → [2,4,6]
     run_transform(1.0f, 3, 0.0f, 0.0f, 2.0f, 0.0f, 1.0f,
                   {2.0f, 4.0f, 6.0f}, "Scale [1,2,3] * 2");
-
-    // Offset +10: [1,2,3] → [11,12,13]
     run_transform(1.0f, 3, 0.0f, 0.0f, 1.0f, 10.0f, 1.0f,
                   {11.0f, 12.0f, 13.0f}, "Offset [1,2,3] + 10");
-
-    // Combined: reverse + rotate by 1 + scale by 2
-    // [1,2,3] → reverse → [3,2,1] → rotate 1 → [2,1,3] → scale 2 → [4,2,6]
     run_transform(1.0f, 3, 1.0f, 1.0f, 2.0f, 0.0f, 1.0f,
                   {4.0f, 2.0f, 6.0f}, "Combined: reverse+rotate+scale");
 }
 
-// =====================================================================
-// Integration test: Clock → Euclidean, Clock → PatternSeq,
-//                   Euclidean/pattern → Stack/a, PatternSeq/pattern → Stack/b,
-//                   Stack → PatTransform
-// =====================================================================
 static void test_integration(vivid::OperatorRegistry& registry) {
     std::fprintf(stderr, "\n=== Integration Test ===\n");
 
@@ -543,10 +552,7 @@ static void test_integration(vivid::OperatorRegistry& registry) {
         {"hits", 3.0f}, {"steps", 8.0f}, {"rotation", 0.0f},
         {"gate_length", 0.5f}, {"rate", 2.0f}
     });
-    g.add_node("seq", "PatternSeq", {
-        {"steps", 4.0f}, {"rate", 2.0f}, {"gate_length", 0.8f}, {"probability", 1.0f},
-        {"val_0", 1.0f}, {"val_1", 2.0f}, {"val_2", 3.0f}, {"val_3", 4.0f}
-    });
+    g.add_node("src", "SpreadSourceOp", {{"base", 1.0f}, {"count", 4.0f}});
     g.add_node("stk", "Stack", {{"mode", 0.0f}});
     g.add_node("xform", "PatTransform", {
         {"reverse", 0.0f}, {"rotate", 0.0f}, {"scale", 2.0f},
@@ -554,17 +560,16 @@ static void test_integration(vivid::OperatorRegistry& registry) {
     });
 
     g.add_connection("clock", "beat_phase", "euclid", "beat_phase");
-    g.add_connection("clock", "beat_phase", "seq", "beat_phase");
     g.add_connection("euclid", "pattern", "stk", "a");
-    g.add_connection("seq", "pattern", "stk", "b");
+    g.add_connection("src", "out", "stk", "b");
     g.add_connection("stk", "output", "xform", "pattern");
 
     vivid::Scheduler sched;
     check(sched.build(g, registry), "integration build");
 
-    // Tick several frames
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 5; ++i) {
         sched.tick(i * 0.016, 0.016, static_cast<uint64_t>(i));
+    }
 
     auto* stk = sched.find_node_mut("stk");
     auto* xform = sched.find_node_mut("xform");
@@ -572,11 +577,9 @@ static void test_integration(vivid::OperatorRegistry& registry) {
     check(xform != nullptr, "transform node found");
 
     if (stk && xform) {
-        // Stack concat: euclidean pattern (8 elements) + seq pattern (4 elements) = 12
         auto& stk_out = stk->output_spreads[0];
         check(stk_out.size() == 12, "stack output: 8+4=12 elements");
 
-        // PatTransform: scale by 2, so each element should be doubled
         auto& xf_out = xform->output_spreads[0];
         check(xf_out.size() == 12, "transform output: 12 elements");
 
@@ -608,17 +611,15 @@ int main() {
         std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
     };
 
-    // PatternSeq is provided by this package build directory.
     copy_op_from(".", "pattern_seq");
-
-    // Remaining operators are expected from vivid-core build output.
+    copy_op_from(".", "sequencer");
     copy_op_from(core_plugin_dir, "euclidean");
     copy_op_from(core_plugin_dir, "stack");
     copy_op_from(core_plugin_dir, "alternate");
     copy_op_from(core_plugin_dir, "pat_transform");
     copy_op_from(core_plugin_dir, "spread_source_op");
     copy_op_from(core_plugin_dir, "clock");
-    copy_op_from(".", "sequencer");
+
     vivid::OperatorRegistry registry;
     check(registry.scan(staging.c_str()), "registry.scan() succeeds");
     check(registry.find("Euclidean") != nullptr, "Euclidean registered");

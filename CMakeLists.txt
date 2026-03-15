@@ -112,6 +112,7 @@ if(VIVID_PACKAGE_BUILD_TESTS)
     tests/test_pattern_algebra.cpp
     ${VIVID_SRC_DIR}/src/runtime/operator_loader.cpp
     ${VIVID_SRC_DIR}/src/runtime/operator_registry.cpp
+    ${VIVID_SRC_DIR}/src/runtime/port_type_registry.cpp
     ${VIVID_SRC_DIR}/src/runtime/wgsl_header_parser.cpp
     ${VIVID_SRC_DIR}/src/runtime/graph.cpp
     ${VIVID_SRC_DIR}/src/runtime/scheduler.cpp

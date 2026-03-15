@@ -27,3 +27,4 @@ Before pushing changes:
 2. Run package tests.
 3. Run `vivid` link/rebuild/uninstall cycle against this package.
 4. Run `test_demo_graphs` against this package's `graphs/` directory.
+5. Keep the direct behavior tests (`test_arpeggiator_patterns`, `test_state_machine`, `test_pattern_algebra`) green alongside graph smoke.

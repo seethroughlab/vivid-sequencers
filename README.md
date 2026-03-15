@@ -45,6 +45,7 @@ The package CI workflow:
 2. Builds package operators and package tests.
 3. Runs package tests.
 4. Runs graph smoke tests against this package's `graphs/` directory.
+5. Keeps the direct behavior tests (`test_arpeggiator_patterns`, `test_state_machine`, `test_pattern_algebra`) green alongside graph smoke.
 
 ## License
 

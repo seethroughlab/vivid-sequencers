@@ -17,5 +17,18 @@
     "chord_progression",
     "state_machine",
     "tracker"
-  ]
+  ],
+  "tests": {
+    "graphs": [
+      "graphs/control_demo.json",
+      "graphs/arpeggiator_demo.json",
+      "graphs/state_machine_demo.json",
+      "graphs/tracker_demo.json"
+    ],
+    "cpp": [
+      "tests/test_package_manifest.cpp",
+      "tests/test_arpeggiator_patterns.cpp",
+      "tests/test_state_machine.cpp"
+    ]
+  }
 }
