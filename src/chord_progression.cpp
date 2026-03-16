@@ -119,6 +119,9 @@ struct ChordProgression : vivid::AudioOperatorBase {
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});
+        out.push_back({"note",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});
+        out.push_back({"vel",        VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});
+        out.push_back({"gate",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
 
@@ -288,7 +291,7 @@ struct ChordProgression : vivid::AudioOperatorBase {
         }
 
         // Scalar fallback: first note of chord
-        if (chord_size > 0) {
+        if (chord_size > 0 && ctx->output_float_values) {
             ctx->output_float_values[0] = static_cast<float>(base_note + intervals[0]);
             ctx->output_float_values[1] = vel;
             ctx->output_float_values[2] = gate_val;

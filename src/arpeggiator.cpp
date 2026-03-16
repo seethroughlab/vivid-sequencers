@@ -82,6 +82,9 @@ struct Arpeggiator : vivid::AudioOperatorBase {
         out.push_back({"notes",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [0]
         out.push_back({"velocities", VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [1]
         out.push_back({"gates",      VIVID_PORT_SPREAD, VIVID_PORT_OUTPUT});  // [2]
+        out.push_back({"note",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [0]
+        out.push_back({"vel",        VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [1]
+        out.push_back({"gate",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [2]
         out.push_back({"step",       VIVID_PORT_FLOAT,  VIVID_PORT_OUTPUT});  // [3]
         out.push_back(VIVID_CUSTOM_REF_PORT("midi_out", VIVID_PORT_OUTPUT, VividMidiBuffer));
     }
@@ -453,10 +456,12 @@ private:
             }
         }
 
-        ctx->output_float_values[0] = note;
-        ctx->output_float_values[1] = vel;
-        ctx->output_float_values[2] = gate;
-        ctx->output_float_values[3] = static_cast<float>(step);
+        if (ctx->output_float_values) {
+            ctx->output_float_values[0] = note;
+            ctx->output_float_values[1] = vel;
+            ctx->output_float_values[2] = gate;
+            ctx->output_float_values[3] = static_cast<float>(step);
+        }
 
         // MIDI output: note-on on gate rising edge, note-off on falling edge
         uint8_t ch = static_cast<uint8_t>(midi_channel.int_value() - 1);

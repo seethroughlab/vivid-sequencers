@@ -70,7 +70,6 @@ if(NOT _wgpu_lib_dir STREQUAL "")
   endif()
 endif()
 set(VIVID_SEQUENCER_OPS
-  sequencer
   drum_sequencer
   pattern_seq
   note_pattern
