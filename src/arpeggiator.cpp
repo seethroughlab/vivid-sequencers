@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include "operator_api/thumbnail.h"
 
 struct Arpeggiator : vivid::AudioOperatorBase {
     static constexpr const char* kName   = "Arpeggiator";
@@ -40,6 +41,14 @@ struct Arpeggiator : vivid::AudioOperatorBase {
     vivid::Param<int> tr_6 {"tr_6", 0, -24, 24};
     vivid::Param<int> tr_7 {"tr_7", 0, -24, 24};
     vivid::Param<int> midi_channel {"midi_channel", 1, 1, 16};
+
+    WGPURenderPipeline thumb_pipeline_ = nullptr;
+    WGPUBindGroup thumb_bind_group_ = nullptr;
+    WGPUBindGroupLayout thumb_bind_layout_ = nullptr;
+    WGPUBuffer thumb_uniform_buf_ = nullptr;
+    WGPUShaderModule thumb_shader_ = nullptr;
+    WGPUPipelineLayout thumb_pipe_layout_ = nullptr;
+    WGPUTextureFormat thumb_pipeline_format_ = WGPUTextureFormat_Undefined;
 
     // Param indices:
     //  0       = mode
@@ -270,114 +279,56 @@ struct Arpeggiator : vivid::AudioOperatorBase {
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
-        // Param layout: mode=0, octaves=1, rate=2, gate_length=3, swing=4,
-        //               latch=5, mod_steps=6, vel_0..vel_7=7..14, tr_0..tr_7=15..22
+        if (!ctx) return;
+        if (!thumb_pipeline_ || thumb_pipeline_format_ != ctx->thumbnail_format) {
+            rebuild_thumb_pipeline(ctx);
+        }
+        if (!thumb_pipeline_ || !thumb_bind_group_ || !thumb_uniform_buf_) {
+            vivid_report_thumbnail_error(ctx, "arpeggiator thumbnail pipeline init failed");
+            return;
+        }
+
+        // Pack uniforms: meta + vel_0..7 + tr_0..7 (normalized)
+        struct Uniforms {
+            float meta[4];      // mod_steps, current_mod, pad, pad
+            float vel_0123[4];
+            float vel_4567[4];
+            float tr_0123[4];   // normalized to [-1,1]
+            float tr_4567[4];
+        } u{};
+
         int msteps = (ctx->param_count > 6)
             ? std::max(1, std::min(8, static_cast<int>(ctx->param_values[6]))) : 8;
-
-        // Current step from output
-        int current_step = -1;
-        if (ctx->output_count > 3) {
-            current_step = static_cast<int>(ctx->output_values[3]);
-        }
+        int current_step = (ctx->output_count > 3)
+            ? static_cast<int>(ctx->output_values[3]) : -1;
         int current_mod = (current_step >= 0) ? (current_step % msteps) : -1;
 
-        float w = static_cast<float>(ctx->width);
-        float h = static_cast<float>(ctx->height);
-        float pad = 4.0f;
-        float plot_w = w - 2.0f * pad;
-        float plot_h = h - 2.0f * pad;
-        float col_w = plot_w / static_cast<float>(msteps);
+        u.meta[0] = static_cast<float>(msteps);
+        u.meta[1] = static_cast<float>(current_mod);
 
-        // Background
-        for (uint32_t y = 0; y < ctx->height; ++y) {
-            uint8_t* row = ctx->pixels + y * ctx->stride;
-            for (uint32_t x = 0; x < ctx->width; ++x) {
-                uint8_t* px = row + x * 4;
-                px[0] = 18; px[1] = 20; px[2] = 23; px[3] = 230;
-            }
-        }
-
-        // Draw each modifier step as a colored bar
-        for (int s = 0; s < msteps; ++s) {
-            float vel_val = (ctx->param_count > 7 + s) ? ctx->param_values[7 + s] : 1.0f;
-            int tr_val = (ctx->param_count > 15 + s)
-                ? static_cast<int>(ctx->param_values[15 + s]) : 0;
-
-            vel_val = std::max(0.0f, std::min(1.0f, vel_val));
-            tr_val = std::max(-24, std::min(24, tr_val));
-
-            // Bar height from velocity
-            float bar_frac = vel_val;
-            float bar_h = bar_frac * (plot_h - 2.0f);
-            if (bar_h < 1.0f) bar_h = 1.0f;
-            float bar_x = pad + s * col_w + 1.0f;
-            float bar_w_px = col_w - 2.0f;
-            float bar_y = pad + plot_h - bar_h;
-
-            // Color from transpose: neutral=blue-grey, positive=warm, negative=cool
-            uint8_t cr, cg, cb;
-            if (tr_val > 0) {
-                float t = static_cast<float>(tr_val) / 24.0f;
-                cr = static_cast<uint8_t>(100 + 120 * t);
-                cg = static_cast<uint8_t>(130 - 30 * t);
-                cb = static_cast<uint8_t>(170 - 100 * t);
-            } else if (tr_val < 0) {
-                float t = static_cast<float>(-tr_val) / 24.0f;
-                cr = static_cast<uint8_t>(100 - 50 * t);
-                cg = static_cast<uint8_t>(130 + 50 * t);
-                cb = static_cast<uint8_t>(170 + 60 * t);
+        for (int i = 0; i < 8; ++i) {
+            float vel = (ctx->param_count > static_cast<uint32_t>(7 + i)) ? ctx->param_values[7 + i] : 1.0f;
+            float tr = (ctx->param_count > static_cast<uint32_t>(15 + i)) ? ctx->param_values[15 + i] : 0.0f;
+            if (i < 4) {
+                u.vel_0123[i] = vel;
+                u.tr_0123[i] = tr / 24.0f;
             } else {
-                cr = 100; cg = 130; cb = 170;
-            }
-
-            bool is_current = (s == current_mod);
-            if (is_current) {
-                cr = static_cast<uint8_t>(std::min(255, cr + 60));
-                cg = static_cast<uint8_t>(std::min(255, cg + 60));
-                cb = static_cast<uint8_t>(std::min(255, cb + 60));
-            }
-
-            uint32_t ix0 = static_cast<uint32_t>(bar_x);
-            uint32_t ix1 = static_cast<uint32_t>(bar_x + bar_w_px);
-            uint32_t iy0 = static_cast<uint32_t>(bar_y);
-            uint32_t iy1 = static_cast<uint32_t>(pad + plot_h);
-            ix1 = std::min(ix1, ctx->width);
-            iy1 = std::min(iy1, ctx->height);
-
-            // Current step background highlight
-            if (is_current) {
-                uint32_t col_x0 = static_cast<uint32_t>(pad + s * col_w);
-                uint32_t col_x1 = std::min(static_cast<uint32_t>(pad + (s + 1) * col_w), ctx->width);
-                uint32_t col_y0 = static_cast<uint32_t>(pad);
-                uint32_t col_y1 = std::min(static_cast<uint32_t>(pad + plot_h), ctx->height);
-                for (uint32_t y = col_y0; y < col_y1; ++y) {
-                    uint8_t* row = ctx->pixels + y * ctx->stride;
-                    for (uint32_t x = col_x0; x < col_x1; ++x) {
-                        uint8_t* px = row + x * 4;
-                        px[0] = 35; px[1] = 38; px[2] = 45; px[3] = 230;
-                    }
-                }
-            }
-
-            // Draw bar
-            for (uint32_t y = iy0; y < iy1; ++y) {
-                uint8_t* row = ctx->pixels + y * ctx->stride;
-                for (uint32_t x = ix0; x < ix1; ++x) {
-                    uint8_t* px = row + x * 4;
-                    px[0] = cr; px[1] = cg; px[2] = cb; px[3] = 220;
-                }
+                u.vel_4567[i - 4] = vel;
+                u.tr_4567[i - 4] = tr / 24.0f;
             }
         }
 
-        // Baseline
-        uint32_t base_y = std::min(static_cast<uint32_t>(pad + plot_h), ctx->height - 1);
-        uint8_t* base_row = ctx->pixels + base_y * ctx->stride;
-        for (uint32_t x = static_cast<uint32_t>(pad);
-             x < std::min(static_cast<uint32_t>(pad + plot_w), ctx->width); ++x) {
-            uint8_t* px = base_row + x * 4;
-            px[0] = 80; px[1] = 85; px[2] = 95; px[3] = 200;
-        }
+        wgpuQueueWriteBuffer(ctx->queue, thumb_uniform_buf_, 0, &u, sizeof(u));
+        vivid::thumbnail::run_pass(ctx, thumb_pipeline_, thumb_bind_group_, "Arpeggiator Thumb Pass");
+    }
+
+    ~Arpeggiator() override {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
     }
 
 private:
@@ -438,6 +389,139 @@ private:
             default:
                 return vivid_sequencers::arp_pattern_index(mode, raw_step, pool_count);
         }
+    }
+
+    void rebuild_thumb_pipeline(const VividThumbnailContext* ctx) {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
+
+        static const char* kThumbFragment = R"(
+struct Uniforms {
+    meta: vec4f,
+    vel_0123: vec4f,
+    vel_4567: vec4f,
+    tr_0123: vec4f,
+    tr_4567: vec4f,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+    let fs = fullscreenTriangle(vertexIndex, true);
+    var out: VertexOutput;
+    out.position = fs.position;
+    out.uv = fs.uv;
+    return out;
+}
+
+fn get_vel(idx: i32) -> f32 {
+    if (idx < 4) { return uniforms.vel_0123[idx]; }
+    return uniforms.vel_4567[idx - 4];
+}
+
+fn get_tr(idx: i32) -> f32 {
+    if (idx < 4) { return uniforms.tr_0123[idx]; }
+    return uniforms.tr_4567[idx - 4];
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+    let uv = input.uv;
+    let bg = vec4f(18.0/255.0, 20.0/255.0, 23.0/255.0, 230.0/255.0);
+    let highlight_bg = vec4f(35.0/255.0, 38.0/255.0, 45.0/255.0, 230.0/255.0);
+    let baseline_col = vec4f(80.0/255.0, 85.0/255.0, 95.0/255.0, 200.0/255.0);
+
+    let msteps = i32(uniforms.meta.x);
+    let current_mod = i32(uniforms.meta.y);
+    if (msteps < 1) { return bg; }
+
+    let pad = 4.0 / 64.0;  // ~4px in normalized coords (assuming ~64px thumb)
+    let plot_x = (uv.x - pad) / (1.0 - 2.0 * pad);
+    let plot_y = (uv.y - pad) / (1.0 - 2.0 * pad);
+
+    if (plot_x < 0.0 || plot_x > 1.0 || plot_y < 0.0 || plot_y > 1.0) {
+        return bg;
+    }
+
+    let col_f = plot_x * f32(msteps);
+    let col_idx = i32(floor(col_f));
+    if (col_idx >= msteps) { return bg; }
+
+    let is_current = (col_idx == current_mod);
+
+    // Baseline
+    if (abs(plot_y - 1.0) < 0.015) {
+        return baseline_col;
+    }
+
+    // Current step background highlight
+    if (is_current) {
+        let vel = clamp(get_vel(col_idx), 0.0, 1.0);
+        let bar_top = 1.0 - vel;
+        let frac = fract(col_f);
+
+        if (plot_y >= bar_top && frac > 0.02 && frac < 0.98) {
+            // Bar with transpose-based color + brightness boost
+            let tr = get_tr(col_idx);
+            var cr = 100.0; var cg = 130.0; var cb = 170.0;
+            if (tr > 0.0) {
+                cr = cr + 120.0 * tr; cg = cg - 30.0 * tr; cb = cb - 100.0 * tr;
+            } else if (tr < 0.0) {
+                let at = -tr;
+                cr = cr - 50.0 * at; cg = cg + 50.0 * at; cb = cb + 60.0 * at;
+            }
+            cr = min(255.0, cr + 60.0);
+            cg = min(255.0, cg + 60.0);
+            cb = min(255.0, cb + 60.0);
+            return vec4f(cr/255.0, cg/255.0, cb/255.0, 220.0/255.0);
+        }
+        return highlight_bg;
+    }
+
+    // Non-current bars
+    let vel = clamp(get_vel(col_idx), 0.0, 1.0);
+    let bar_top = 1.0 - vel;
+    let frac = fract(col_f);
+
+    if (plot_y >= bar_top && frac > 0.02 && frac < 0.98) {
+        let tr = get_tr(col_idx);
+        var cr = 100.0; var cg = 130.0; var cb = 170.0;
+        if (tr > 0.0) {
+            cr = cr + 120.0 * tr; cg = cg - 30.0 * tr; cb = cb - 100.0 * tr;
+        } else if (tr < 0.0) {
+            let at = -tr;
+            cr = cr - 50.0 * at; cg = cg + 50.0 * at; cb = cb + 60.0 * at;
+        }
+        return vec4f(cr/255.0, cg/255.0, cb/255.0, 220.0/255.0);
+    }
+
+    return bg;
+}
+)";
+
+        static constexpr uint64_t kUniformSize = sizeof(float) * 20;
+        thumb_shader_ = vivid::thumbnail::create_shader(ctx->device, kThumbFragment, "Arp Thumb Shader");
+        thumb_uniform_buf_ =
+            vivid::thumbnail::create_uniform_buffer(ctx->device, kUniformSize, "Arp Thumb Uniforms");
+        thumb_bind_layout_ =
+            vivid::thumbnail::create_uniform_bind_layout(ctx->device, kUniformSize, "Arp Thumb BGL");
+        thumb_pipe_layout_ =
+            vivid::thumbnail::create_pipeline_layout(ctx->device, thumb_bind_layout_, "Arp Thumb Layout");
+        thumb_bind_group_ = vivid::thumbnail::create_uniform_bind_group(
+            ctx->device, thumb_bind_layout_, thumb_uniform_buf_, kUniformSize, "Arp Thumb BG");
+        thumb_pipeline_ = vivid::thumbnail::create_pipeline(
+            ctx->device, thumb_shader_, thumb_pipe_layout_, ctx->thumbnail_format, "Arp Thumb Pipeline");
+        thumb_pipeline_format_ = ctx->thumbnail_format;
     }
 
     void write_output(const VividAudioContext* ctx, float note, float vel, float gate, int step) {

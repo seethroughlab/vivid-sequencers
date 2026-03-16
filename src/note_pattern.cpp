@@ -4,6 +4,7 @@
 #include "midi_helpers.h"
 #include <algorithm>
 #include <cmath>
+#include "operator_api/thumbnail.h"
 
 namespace note_insp {
 static const char* kNoteNames[] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
@@ -43,6 +44,14 @@ struct NotePattern : vivid::AudioOperatorBase {
     vivid::Param<float> gate_length  {"gate_length",    0.8f, 0.01f, 1.0f};
     vivid::Param<float> velocity     {"velocity",       0.8f, 0.0f, 1.0f};
     vivid::Param<int>   midi_channel {"midi_channel",   1, 1, 16};
+
+    WGPURenderPipeline thumb_pipeline_ = nullptr;
+    WGPUBindGroup thumb_bind_group_ = nullptr;
+    WGPUBindGroupLayout thumb_bind_layout_ = nullptr;
+    WGPUBuffer thumb_uniform_buf_ = nullptr;
+    WGPUShaderModule thumb_shader_ = nullptr;
+    WGPUPipelineLayout thumb_pipe_layout_ = nullptr;
+    WGPUTextureFormat thumb_pipeline_format_ = WGPUTextureFormat_Undefined;
 
     // Internal state
     int beat_count_ = 0;
@@ -274,24 +283,34 @@ struct NotePattern : vivid::AudioOperatorBase {
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
-        // Param layout: steps=0, root_0..root_7=1..8, type_0..type_7=9..16,
-        //               octave=17, beats_per_step=18, gate_length=19, velocity=20
-        int num_steps = (ctx->param_count > 0) ? static_cast<int>(ctx->param_values[0]) : 4;
-        num_steps = std::max(1, std::min(8, num_steps));
-        int bps = (ctx->param_count > 18) ? static_cast<int>(ctx->param_values[18]) : 4;
-        if (bps < 1) bps = 1;
+        if (!ctx) return;
+        if (!thumb_pipeline_ || thumb_pipeline_format_ != ctx->thumbnail_format) {
+            rebuild_thumb_pipeline(ctx);
+        }
+        if (!thumb_pipeline_ || !thumb_bind_group_ || !thumb_uniform_buf_) {
+            vivid_report_thumbnail_error(ctx, "note_pattern thumbnail pipeline init failed");
+            return;
+        }
 
-        // Detect current step from first output note value
-        // output[0] = root + octave*12 + intervals[0] = root + octave*12 (for major/minor root)
+        // Pack uniforms
+        struct Uniforms {
+            float meta[4];       // num_steps, current_step, pad, pad
+            float root_0123[4];
+            float root_4567[4];
+            float type_0123[4];
+            float type_4567[4];
+        } u{};
+
+        int num_steps = (ctx->param_count > 0) ? std::max(1, std::min(8, static_cast<int>(ctx->param_values[0]))) : 4;
+
+        // Detect current step from output
         int current_step = -1;
         if (ctx->output_count > 0) {
             float out_note = ctx->output_values[0];
             int oct = (ctx->param_count > 17) ? static_cast<int>(ctx->param_values[17]) : 4;
             for (int s = 0; s < num_steps; ++s) {
                 int root = static_cast<int>(ctx->param_values[1 + s]);
-                int chord_type = static_cast<int>(ctx->param_values[9 + s]);
-                if (chord_type < 0) chord_type = 0;
-                if (chord_type > 6) chord_type = 6;
+                int chord_type = std::clamp(static_cast<int>(ctx->param_values[9 + s]), 0, 6);
                 float expected = static_cast<float>(root + oct * 12 + kChordIntervals[chord_type][0]);
                 if (std::fabs(out_note - expected) < 0.5f) {
                     current_step = s;
@@ -300,100 +319,155 @@ struct NotePattern : vivid::AudioOperatorBase {
             }
         }
 
-        // 7-color palette for chord types (RGBA8)
-        static constexpr uint8_t kTypeColors[7][3] = {
-            {100, 160, 220},  // Major  — blue
-            {160, 100, 200},  // Minor  — purple
-            {200, 100, 100},  // Dim    — red
-            {220, 180, 80},   // Aug    — gold
-            { 80, 180, 160},  // Dom7   — teal
-            {140, 120, 200},  // Min7   — lavender
-            { 80, 140, 220},  // Maj7   — sky blue
-        };
+        u.meta[0] = static_cast<float>(num_steps);
+        u.meta[1] = static_cast<float>(current_step);
 
-        float w = static_cast<float>(ctx->width);
-        float h = static_cast<float>(ctx->height);
-        float pad = 4.0f;
-        float plot_w = w - 2.0f * pad;
-        float plot_h = h - 2.0f * pad;
-        float col_w = plot_w / static_cast<float>(num_steps);
-
-        // Background
-        const uint8_t bg_r = 18, bg_g = 20, bg_b = 23, bg_a = 230;
-        for (uint32_t y = 0; y < ctx->height; ++y) {
-            uint8_t* row = ctx->pixels + y * ctx->stride;
-            for (uint32_t x = 0; x < ctx->width; ++x) {
-                uint8_t* px = row + x * 4;
-                px[0] = bg_r; px[1] = bg_g; px[2] = bg_b; px[3] = bg_a;
+        for (int i = 0; i < 8; ++i) {
+            float root = (ctx->param_count > static_cast<uint32_t>(1 + i))
+                ? ctx->param_values[1 + i] : 0.0f;
+            float type = (ctx->param_count > static_cast<uint32_t>(9 + i))
+                ? ctx->param_values[9 + i] : 0.0f;
+            if (i < 4) {
+                u.root_0123[i] = root;
+                u.type_0123[i] = type;
+            } else {
+                u.root_4567[i - 4] = root;
+                u.type_4567[i - 4] = type;
             }
         }
 
-        // Draw each step as a colored bar
-        for (int s = 0; s < num_steps; ++s) {
-            int root = static_cast<int>(ctx->param_values[1 + s]);
-            int chord_type = static_cast<int>(ctx->param_values[9 + s]);
-            root = std::max(0, std::min(11, root));
-            chord_type = std::max(0, std::min(6, chord_type));
+        wgpuQueueWriteBuffer(ctx->queue, thumb_uniform_buf_, 0, &u, sizeof(u));
+        vivid::thumbnail::run_pass(ctx, thumb_pipeline_, thumb_bind_group_, "NotePattern Thumb Pass");
+    }
 
-            // Bar height: root 0 = short, root 11 = tall
-            float bar_frac = (static_cast<float>(root) + 1.0f) / 12.0f;
-            float bar_h = bar_frac * (plot_h - 2.0f);
-            float bar_x = pad + s * col_w + 1.0f;
-            float bar_w_px = col_w - 2.0f;
-            float bar_y = pad + plot_h - bar_h;
+    ~NotePattern() override {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
+    }
 
-            uint8_t cr = kTypeColors[chord_type][0];
-            uint8_t cg = kTypeColors[chord_type][1];
-            uint8_t cb = kTypeColors[chord_type][2];
-            bool is_current = (s == current_step);
+private:
+    void rebuild_thumb_pipeline(const VividThumbnailContext* ctx) {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
 
-            // Brighten current step
-            if (is_current) {
-                cr = static_cast<uint8_t>(std::min(255, cr + 60));
-                cg = static_cast<uint8_t>(std::min(255, cg + 60));
-                cb = static_cast<uint8_t>(std::min(255, cb + 60));
-            }
+        static const char* kThumbFragment = R"(
+struct Uniforms {
+    meta: vec4f,
+    root_0123: vec4f,
+    root_4567: vec4f,
+    type_0123: vec4f,
+    type_4567: vec4f,
+};
 
-            uint32_t ix0 = static_cast<uint32_t>(bar_x);
-            uint32_t ix1 = static_cast<uint32_t>(bar_x + bar_w_px);
-            uint32_t iy0 = static_cast<uint32_t>(bar_y);
-            uint32_t iy1 = static_cast<uint32_t>(pad + plot_h);
-            ix1 = std::min(ix1, ctx->width);
-            iy1 = std::min(iy1, ctx->height);
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
 
-            // Current step: dim background highlight
-            if (is_current) {
-                uint32_t col_x0 = static_cast<uint32_t>(pad + s * col_w);
-                uint32_t col_x1 = std::min(static_cast<uint32_t>(pad + (s + 1) * col_w), ctx->width);
-                uint32_t col_y0 = static_cast<uint32_t>(pad);
-                uint32_t col_y1 = std::min(static_cast<uint32_t>(pad + plot_h), ctx->height);
-                for (uint32_t y = col_y0; y < col_y1; ++y) {
-                    uint8_t* row = ctx->pixels + y * ctx->stride;
-                    for (uint32_t x = col_x0; x < col_x1; ++x) {
-                        uint8_t* px = row + x * 4;
-                        px[0] = 35; px[1] = 38; px[2] = 45; px[3] = 230;
-                    }
-                }
-            }
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
-            // Draw bar
-            for (uint32_t y = iy0; y < iy1; ++y) {
-                uint8_t* row = ctx->pixels + y * ctx->stride;
-                for (uint32_t x = ix0; x < ix1; ++x) {
-                    uint8_t* px = row + x * 4;
-                    px[0] = cr; px[1] = cg; px[2] = cb; px[3] = 220;
-                }
-            }
-        }
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+    let fs = fullscreenTriangle(vertexIndex, true);
+    var out: VertexOutput;
+    out.position = fs.position;
+    out.uv = fs.uv;
+    return out;
+}
 
-        // Baseline
-        uint32_t base_y = std::min(static_cast<uint32_t>(pad + plot_h), ctx->height - 1);
-        uint8_t* base_row = ctx->pixels + base_y * ctx->stride;
-        for (uint32_t x = static_cast<uint32_t>(pad);
-             x < std::min(static_cast<uint32_t>(pad + plot_w), ctx->width); ++x) {
-            uint8_t* px = base_row + x * 4;
-            px[0] = 80; px[1] = 85; px[2] = 95; px[3] = 200;
-        }
+fn get_root(idx: i32) -> f32 {
+    if (idx < 4) { return uniforms.root_0123[idx]; }
+    return uniforms.root_4567[idx - 4];
+}
+
+fn get_type(idx: i32) -> f32 {
+    if (idx < 4) { return uniforms.type_0123[idx]; }
+    return uniforms.type_4567[idx - 4];
+}
+
+fn type_color(t: i32) -> vec3f {
+    // 7-color palette for chord types
+    switch(t) {
+        case 0: { return vec3f(100.0, 160.0, 220.0); }  // Major  — blue
+        case 1: { return vec3f(160.0, 100.0, 200.0); }  // Minor  — purple
+        case 2: { return vec3f(200.0, 100.0, 100.0); }  // Dim    — red
+        case 3: { return vec3f(220.0, 180.0, 80.0); }   // Aug    — gold
+        case 4: { return vec3f(80.0, 180.0, 160.0); }   // Dom7   — teal
+        case 5: { return vec3f(140.0, 120.0, 200.0); }  // Min7   — lavender
+        case 6: { return vec3f(80.0, 140.0, 220.0); }   // Maj7   — sky blue
+        default: { return vec3f(100.0, 160.0, 220.0); }
+    }
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+    let uv = input.uv;
+    let bg = vec4f(18.0/255.0, 20.0/255.0, 23.0/255.0, 230.0/255.0);
+    let highlight_bg = vec4f(35.0/255.0, 38.0/255.0, 45.0/255.0, 230.0/255.0);
+
+    let num_steps = i32(uniforms.meta.x);
+    let current_step = i32(uniforms.meta.y);
+    if (num_steps < 1) { return bg; }
+
+    let pad = 4.0 / 64.0;
+    let plot_x = (uv.x - pad) / (1.0 - 2.0 * pad);
+    let plot_y = (uv.y - pad) / (1.0 - 2.0 * pad);
+
+    if (plot_x < 0.0 || plot_x > 1.0 || plot_y < 0.0 || plot_y > 1.0) {
+        return bg;
+    }
+
+    let col_f = plot_x * f32(num_steps);
+    let col_idx = i32(floor(col_f));
+    if (col_idx >= num_steps) { return bg; }
+
+    let is_current = (col_idx == current_step);
+    let root = clamp(i32(get_root(col_idx)), 0, 11);
+    let chord_type = clamp(i32(get_type(col_idx)), 0, 6);
+
+    // Bar height from root: (root+1)/12
+    let bar_frac = (f32(root) + 1.0) / 12.0;
+    let bar_top = 1.0 - bar_frac;
+    let frac = fract(col_f);
+
+    var col = type_color(chord_type);
+    if (is_current) {
+        col = min(col + vec3f(60.0), vec3f(255.0));
+    }
+
+    if (plot_y >= bar_top && frac > 0.02 && frac < 0.98) {
+        return vec4f(col / 255.0, 220.0/255.0);
+    }
+
+    if (is_current) {
+        return highlight_bg;
+    }
+
+    return bg;
+}
+)";
+
+        static constexpr uint64_t kUniformSize = sizeof(float) * 20;
+        thumb_shader_ = vivid::thumbnail::create_shader(ctx->device, kThumbFragment, "NotePattern Thumb Shader");
+        thumb_uniform_buf_ =
+            vivid::thumbnail::create_uniform_buffer(ctx->device, kUniformSize, "NotePattern Thumb Uniforms");
+        thumb_bind_layout_ =
+            vivid::thumbnail::create_uniform_bind_layout(ctx->device, kUniformSize, "NotePattern Thumb BGL");
+        thumb_pipe_layout_ =
+            vivid::thumbnail::create_pipeline_layout(ctx->device, thumb_bind_layout_, "NotePattern Thumb Layout");
+        thumb_bind_group_ = vivid::thumbnail::create_uniform_bind_group(
+            ctx->device, thumb_bind_layout_, thumb_uniform_buf_, kUniformSize, "NotePattern Thumb BG");
+        thumb_pipeline_ = vivid::thumbnail::create_pipeline(
+            ctx->device, thumb_shader_, thumb_pipe_layout_, ctx->thumbnail_format, "NotePattern Thumb Pipeline");
+        thumb_pipeline_format_ = ctx->thumbnail_format;
     }
 };
 

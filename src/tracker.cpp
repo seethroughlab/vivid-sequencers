@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include "operator_api/thumbnail.h"
 
 // ---------------------------------------------------------------------------
 // Inspector helpers (namespace-scope, used by Tracker::draw_inspector)
@@ -129,6 +130,14 @@ struct Tracker : vivid::AudioOperatorBase {
     vivid::Param<int>   mute_mask     {"mute_mask",     0, 0, 255};
     vivid::Param<vivid::TextValue> pattern_data {"pattern_data", ""};
 
+    WGPURenderPipeline thumb_pipeline_ = nullptr;
+    WGPUBindGroup thumb_bind_group_ = nullptr;
+    WGPUBindGroupLayout thumb_bind_layout_ = nullptr;
+    WGPUBuffer thumb_uniform_buf_ = nullptr;
+    WGPUShaderModule thumb_shader_ = nullptr;
+    WGPUPipelineLayout thumb_pipe_layout_ = nullptr;
+    WGPUTextureFormat thumb_pipeline_format_ = WGPUTextureFormat_Undefined;
+
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&rate);           // 0
         out.push_back(&speed);          // 1
@@ -242,95 +251,78 @@ struct Tracker : vivid::AudioOperatorBase {
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
-        float w = static_cast<float>(ctx->width);
-        float h = static_cast<float>(ctx->height);
-
-        // Clear to dark
-        for (uint32_t y = 0; y < ctx->height; ++y) {
-            uint8_t* row = ctx->pixels + y * ctx->stride;
-            for (uint32_t x = 0; x < ctx->width; ++x) {
-                uint8_t* px = row + x * 4;
-                px[0] = 18; px[1] = 20; px[2] = 23; px[3] = 230;
-            }
+        if (!ctx) return;
+        if (!thumb_pipeline_ || thumb_pipeline_format_ != ctx->thumbnail_format) {
+            rebuild_thumb_pipeline(ctx);
+        }
+        if (!thumb_pipeline_ || !thumb_bind_group_ || !thumb_uniform_buf_) {
+            vivid_report_thumbnail_error(ctx, "tracker thumbnail pipeline init failed");
+            return;
         }
 
-        // Draw a simplified tracker grid view
-        // Current row from output port index 3 ("row")
+        struct Uniforms {
+            float meta[4];          // num_rows, current_row, num_channels_used, pad
+            uint32_t activity_lo[4]; // ch0..ch3 row activity bitmasks (32 bits each)
+            uint32_t activity_hi[4]; // ch4..ch7 row activity bitmasks
+        } u{};
+
         int cur_row = -1;
         if (ctx->output_count > 3)
             cur_row = static_cast<int>(ctx->output_values[3]);
 
-        // Parse song for thumbnail
+        // Parse song data
         tracker::TrackerSong thumb_song;
         bool has_data = false;
         if (pattern_data.str_value.size() > 0) {
             has_data = tracker::deserialize_song(pattern_data.str_value, thumb_song);
         }
-        if (!has_data) return;
 
-        int pat_idx = 0;
-        if (ctx->output_count > 4)
-            pat_idx = std::clamp(static_cast<int>(ctx->output_values[4]), 0, thumb_song.num_patterns - 1);
+        int nr = 0;
+        int num_ch_used = 0;
+        if (has_data) {
+            int pat_idx = 0;
+            if (ctx->output_count > 4)
+                pat_idx = std::clamp(static_cast<int>(ctx->output_values[4]), 0, thumb_song.num_patterns - 1);
 
-        const auto& pat = thumb_song.patterns[pat_idx];
-        int nr = pat.num_rows;
-        if (nr <= 0) return;
+            const auto& pat = thumb_song.patterns[pat_idx];
+            nr = pat.num_rows;
 
-        float cell_w = w / tracker::MAX_CHANNELS;
-        float cell_h = h / static_cast<float>(nr);
-
-        // Channel colors
-        static constexpr uint8_t kChColors[8][3] = {
-            {100, 160, 220}, {220, 120, 80}, {80, 200, 140}, {200, 180, 60},
-            {160, 100, 200}, {60, 180, 200}, {200, 100, 160}, {140, 200, 80}
-        };
-
-        for (int ch = 0; ch < tracker::MAX_CHANNELS; ++ch) {
-            for (int r = 0; r < nr; ++r) {
-                const auto& cell = pat.cells[ch][r];
-                if (cell.note == tracker::NOTE_EMPTY) continue;
-
-                float cx = ch * cell_w + 1;
-                float cy = r * cell_h;
-                float cw = cell_w - 2;
-                float ch_h = std::max(1.0f, cell_h - 1);
-
-                uint8_t alpha = (cell.note == tracker::NOTE_OFF) ? 60 : 180;
-                if (r == cur_row) alpha = 255;
-
-                int x0 = std::max(0, static_cast<int>(cx));
-                int x1 = std::min(static_cast<int>(w), static_cast<int>(cx + cw));
-                int y0 = std::max(0, static_cast<int>(cy));
-                int y1 = std::min(static_cast<int>(h), static_cast<int>(cy + ch_h));
-
-                for (int py = y0; py < y1; ++py) {
-                    uint8_t* row = ctx->pixels + py * ctx->stride;
-                    for (int px = x0; px < x1; ++px) {
-                        uint8_t* p = row + px * 4;
-                        p[0] = kChColors[ch][0];
-                        p[1] = kChColors[ch][1];
-                        p[2] = kChColors[ch][2];
-                        p[3] = alpha;
+            // Build activity bitmasks — quantize into 32 bins
+            for (int ch = 0; ch < tracker::MAX_CHANNELS; ++ch) {
+                uint32_t mask = 0;
+                bool ch_has_notes = false;
+                for (int r = 0; r < nr; ++r) {
+                    if (pat.cells[ch][r].note != tracker::NOTE_EMPTY) {
+                        int bin = (nr > 32) ? (r * 32 / nr) : r;
+                        bin = std::min(bin, 31);
+                        mask |= (1u << bin);
+                        ch_has_notes = true;
                     }
                 }
-            }
-        }
-
-        // Current row highlight bar
-        if (cur_row >= 0 && cur_row < nr) {
-            float ry = cur_row * cell_h;
-            int y0 = std::max(0, static_cast<int>(ry));
-            int y1 = std::min(static_cast<int>(h), static_cast<int>(ry + std::max(1.0f, cell_h)));
-            for (int py = y0; py < y1; ++py) {
-                uint8_t* row = ctx->pixels + py * ctx->stride;
-                for (int px = 0; px < static_cast<int>(w); ++px) {
-                    uint8_t* p = row + px * 4;
-                    p[0] = std::min(255, p[0] + 30);
-                    p[1] = std::min(255, p[1] + 35);
-                    p[2] = std::min(255, p[2] + 40);
+                if (ch_has_notes) num_ch_used = ch + 1;
+                if (ch < 4) {
+                    u.activity_lo[ch] = mask;
+                } else {
+                    u.activity_hi[ch - 4] = mask;
                 }
             }
         }
+
+        u.meta[0] = static_cast<float>(std::min(nr, 32));
+        u.meta[1] = static_cast<float>(nr > 32 ? (cur_row * 32 / std::max(nr, 1)) : cur_row);
+        u.meta[2] = static_cast<float>(num_ch_used);
+
+        wgpuQueueWriteBuffer(ctx->queue, thumb_uniform_buf_, 0, &u, sizeof(u));
+        vivid::thumbnail::run_pass(ctx, thumb_pipeline_, thumb_bind_group_, "Tracker Thumb Pass");
+    }
+
+    ~Tracker() override {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
     }
 
     void draw_inspector(VividInspectorContext* ctx) override {
@@ -862,6 +854,122 @@ private:
                 tracker::deserialize_song(pattern_data.str_value, song_);
             }
         }
+    }
+
+    void rebuild_thumb_pipeline(const VividThumbnailContext* ctx) {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
+
+        static const char* kThumbFragment = R"(
+struct Uniforms {
+    meta: vec4f,
+    activity_lo: vec4u,
+    activity_hi: vec4u,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+    let fs = fullscreenTriangle(vertexIndex, true);
+    var out: VertexOutput;
+    out.position = fs.position;
+    out.uv = fs.uv;
+    return out;
+}
+
+fn get_activity(ch: i32, row: i32) -> bool {
+    var mask: u32;
+    if (ch < 4) {
+        mask = uniforms.activity_lo[ch];
+    } else {
+        mask = uniforms.activity_hi[ch - 4];
+    }
+    return (mask & (1u << u32(row))) != 0u;
+}
+
+fn ch_color(ch: i32) -> vec3f {
+    switch(ch) {
+        case 0: { return vec3f(100.0, 160.0, 220.0); }
+        case 1: { return vec3f(220.0, 120.0, 80.0); }
+        case 2: { return vec3f(80.0, 200.0, 140.0); }
+        case 3: { return vec3f(200.0, 180.0, 60.0); }
+        case 4: { return vec3f(160.0, 100.0, 200.0); }
+        case 5: { return vec3f(60.0, 180.0, 200.0); }
+        case 6: { return vec3f(200.0, 100.0, 160.0); }
+        case 7: { return vec3f(140.0, 200.0, 80.0); }
+        default: { return vec3f(100.0, 100.0, 100.0); }
+    }
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+    let uv = input.uv;
+    let bg = vec4f(18.0/255.0, 20.0/255.0, 23.0/255.0, 230.0/255.0);
+
+    let num_rows = i32(uniforms.meta.x);
+    let cur_row = i32(uniforms.meta.y);
+    let num_ch = max(i32(uniforms.meta.z), 1);
+
+    if (num_rows <= 0) { return bg; }
+
+    let col_f = uv.x * f32(num_ch);
+    let row_f = uv.y * f32(num_rows);
+    let col = i32(floor(col_f));
+    let row = i32(floor(row_f));
+
+    if (col >= num_ch || row >= num_rows) { return bg; }
+
+    var result = bg;
+
+    // Current row highlight
+    if (row == cur_row) {
+        result = vec4f(
+            min(1.0, bg.r + 30.0/255.0),
+            min(1.0, bg.g + 35.0/255.0),
+            min(1.0, bg.b + 40.0/255.0),
+            bg.a
+        );
+    }
+
+    // Active cell
+    let cell_x = fract(col_f);
+    let cell_y = fract(row_f);
+    let in_cell = cell_x > 0.05 && cell_x < 0.95 && cell_y > 0.05 && cell_y < 0.95;
+
+    if (in_cell && get_activity(col, row)) {
+        let c = ch_color(col);
+        var alpha = 180.0;
+        if (row == cur_row) { alpha = 255.0; }
+        result = vec4f(c / 255.0, alpha / 255.0);
+    }
+
+    return result;
+}
+)";
+
+        static constexpr uint64_t kUniformSize = sizeof(float) * 4 + sizeof(uint32_t) * 8;
+        thumb_shader_ = vivid::thumbnail::create_shader(ctx->device, kThumbFragment, "Tracker Thumb Shader");
+        thumb_uniform_buf_ =
+            vivid::thumbnail::create_uniform_buffer(ctx->device, kUniformSize, "Tracker Thumb Uniforms");
+        thumb_bind_layout_ =
+            vivid::thumbnail::create_uniform_bind_layout(ctx->device, kUniformSize, "Tracker Thumb BGL");
+        thumb_pipe_layout_ =
+            vivid::thumbnail::create_pipeline_layout(ctx->device, thumb_bind_layout_, "Tracker Thumb Layout");
+        thumb_bind_group_ = vivid::thumbnail::create_uniform_bind_group(
+            ctx->device, thumb_bind_layout_, thumb_uniform_buf_, kUniformSize, "Tracker Thumb BG");
+        thumb_pipeline_ = vivid::thumbnail::create_pipeline(
+            ctx->device, thumb_shader_, thumb_pipe_layout_, ctx->thumbnail_format, "Tracker Thumb Pipeline");
+        thumb_pipeline_format_ = ctx->thumbnail_format;
     }
 
     int get_pattern_index() const {

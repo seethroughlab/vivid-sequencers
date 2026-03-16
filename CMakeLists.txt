@@ -82,7 +82,7 @@ set(VIVID_SEQUENCER_OPS
 
 foreach(name IN LISTS VIVID_SEQUENCER_OPS)
   add_library(${name} MODULE src/${name}.cpp)
-  target_link_libraries(${name} PRIVATE vivid_operator_api)
+  target_link_libraries(${name} PRIVATE vivid_operator_api webgpu)
   set_target_properties(${name} PROPERTIES
     PREFIX ""
     SUFFIX "${VIVID_PLUGIN_SUFFIX}"

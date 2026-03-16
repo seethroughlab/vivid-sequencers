@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include "operator_api/thumbnail.h"
 
 namespace drum_insp {
 static const char* kDrumPrefix[] = {"kick_", "snare_", "hat_", "oh_", "clap_", "tom_"};
@@ -358,6 +359,14 @@ struct DrumSequencer : vivid::AudioOperatorBase {
     vivid::Param<float> tom_mb_15{"tom_mb_15",0.5f, 0.0f, 1.0f};
 
     vivid::Param<int> midi_channel {"midi_channel", 1, 1, 16};
+
+    WGPURenderPipeline thumb_pipeline_ = nullptr;
+    WGPUBindGroup thumb_bind_group_ = nullptr;
+    WGPUBindGroupLayout thumb_bind_layout_ = nullptr;
+    WGPUBuffer thumb_uniform_buf_ = nullptr;
+    WGPUShaderModule thumb_shader_ = nullptr;
+    WGPUPipelineLayout thumb_pipe_layout_ = nullptr;
+    WGPUTextureFormat thumb_pipeline_format_ = WGPUTextureFormat_Undefined;
 
     void collect_params(std::vector<vivid::ParamBase*>& out) override {
         out.push_back(&steps);   // 0
@@ -855,99 +864,61 @@ struct DrumSequencer : vivid::AudioOperatorBase {
     }
 
     void draw_thumbnail(const VividThumbnailContext* ctx) override {
-        float w = static_cast<float>(ctx->width);
-        float h = static_cast<float>(ctx->height);
+        if (!ctx) return;
+        if (!thumb_pipeline_ || thumb_pipeline_format_ != ctx->thumbnail_format) {
+            rebuild_thumb_pipeline(ctx);
+        }
+        if (!thumb_pipeline_ || !thumb_bind_group_ || !thumb_uniform_buf_) {
+            vivid_report_thumbnail_error(ctx, "drum_sequencer thumbnail pipeline init failed");
+            return;
+        }
+
+        // Pack triggers into bitmasks
+        struct Uniforms {
+            float meta[4];      // num_steps, current_step, pad, pad
+            uint32_t triggers_lo[4]; // kick, snare, hat, oh bitmasks
+            uint32_t triggers_hi[4]; // clap, tom, 0, 0
+        } u{};
+
+        static constexpr int kDrumBase[6] = { 8, 24, 40, 56, 72, 88 };
 
         int n = 16;
         if (ctx->param_count > 0)
             n = std::max(1, std::min(16, static_cast<int>(ctx->param_values[0])));
-
-        // Current step from output[6]
         int cur_step = -1;
         if (ctx->output_count > 6)
             cur_step = static_cast<int>(ctx->output_values[6]);
 
-        // Colors per drum row (RGBA 0-255)
-        static constexpr uint8_t kDrumColors[6][3] = {
-            {220, 80, 80},    // kick — red
-            {220, 190, 60},   // snare — gold
-            {60, 200, 180},   // hat — teal
-            {80, 130, 220},   // oh — blue
-            {160, 90, 200},   // clap — purple
-            {80, 200, 100},   // tom — green
-        };
+        u.meta[0] = static_cast<float>(n);
+        u.meta[1] = static_cast<float>(cur_step);
 
-        static constexpr int kDrumBase[6] = { 8, 24, 40, 56, 72, 88 };
-
-        float pad_x = 2.0f, pad_y = 2.0f;
-        float grid_w = w - 2.0f * pad_x;
-        float grid_h = h - 2.0f * pad_y;
-        float cell_w = grid_w / 16.0f;
-        float cell_h = grid_h / 6.0f;
-        float dot_inset = 1.5f;
-
-        // Clear to dark background
-        for (uint32_t y = 0; y < ctx->height; ++y) {
-            uint8_t* row = ctx->pixels + y * ctx->stride;
-            for (uint32_t x = 0; x < ctx->width; ++x) {
-                uint8_t* px = row + x * 4;
-                px[0] = 18; px[1] = 20; px[2] = 23; px[3] = 230;
-            }
-        }
-
-        // Draw active cells and current step highlight
         for (int drum = 0; drum < 6; ++drum) {
+            uint32_t mask = 0;
             for (int s = 0; s < 16; ++s) {
-                float cx = pad_x + s * cell_w;
-                float cy = pad_y + drum * cell_h;
-
-                // Current step column highlight
-                if (s == cur_step && s < n) {
-                    int x0 = static_cast<int>(cx);
-                    int x1 = static_cast<int>(cx + cell_w);
-                    int y0 = static_cast<int>(cy);
-                    int y1 = static_cast<int>(cy + cell_h);
-                    x0 = std::max(0, x0); x1 = std::min(static_cast<int>(ctx->width), x1);
-                    y0 = std::max(0, y0); y1 = std::min(static_cast<int>(ctx->height), y1);
-                    for (int py2 = y0; py2 < y1; ++py2) {
-                        uint8_t* row = ctx->pixels + py2 * ctx->stride;
-                        for (int px2 = x0; px2 < x1; ++px2) {
-                            uint8_t* p = row + px2 * 4;
-                            // Brighten existing pixel
-                            p[0] = std::min(255, p[0] + 25);
-                            p[1] = std::min(255, p[1] + 30);
-                            p[2] = std::min(255, p[2] + 35);
-                        }
-                    }
-                }
-
-                // Active cell dot
-                bool active = false;
-                if (ctx->param_count > static_cast<uint32_t>(kDrumBase[drum] + s))
-                    active = ctx->param_values[kDrumBase[drum] + s] > 0.5f;
-
-                if (active) {
-                    int x0 = static_cast<int>(cx + dot_inset);
-                    int x1 = static_cast<int>(cx + cell_w - dot_inset);
-                    int y0 = static_cast<int>(cy + dot_inset);
-                    int y1 = static_cast<int>(cy + cell_h - dot_inset);
-                    x0 = std::max(0, x0); x1 = std::min(static_cast<int>(ctx->width), x1);
-                    y0 = std::max(0, y0); y1 = std::min(static_cast<int>(ctx->height), y1);
-
-                    uint8_t alpha = (s < n) ? 230 : 60;
-                    for (int py2 = y0; py2 < y1; ++py2) {
-                        uint8_t* row = ctx->pixels + py2 * ctx->stride;
-                        for (int px2 = x0; px2 < x1; ++px2) {
-                            uint8_t* p = row + px2 * 4;
-                            p[0] = kDrumColors[drum][0];
-                            p[1] = kDrumColors[drum][1];
-                            p[2] = kDrumColors[drum][2];
-                            p[3] = alpha;
-                        }
+                if (ctx->param_count > static_cast<uint32_t>(kDrumBase[drum] + s)) {
+                    if (ctx->param_values[kDrumBase[drum] + s] > 0.5f) {
+                        mask |= (1u << s);
                     }
                 }
             }
+            if (drum < 4) {
+                u.triggers_lo[drum] = mask;
+            } else {
+                u.triggers_hi[drum - 4] = mask;
+            }
         }
+
+        wgpuQueueWriteBuffer(ctx->queue, thumb_uniform_buf_, 0, &u, sizeof(u));
+        vivid::thumbnail::run_pass(ctx, thumb_pipeline_, thumb_bind_group_, "DrumSeq Thumb Pass");
+    }
+
+    ~DrumSequencer() override {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
     }
 
 private:
@@ -955,6 +926,126 @@ private:
     float phase_offset_ = 0.0f;
     bool prev_reset_ = false;
     VividMidiBuffer midi_buf_ = {};
+
+    void rebuild_thumb_pipeline(const VividThumbnailContext* ctx) {
+        vivid::gpu::release(thumb_pipeline_);
+        vivid::gpu::release(thumb_bind_group_);
+        vivid::gpu::release(thumb_bind_layout_);
+        vivid::gpu::release(thumb_uniform_buf_);
+        vivid::gpu::release(thumb_shader_);
+        vivid::gpu::release(thumb_pipe_layout_);
+
+        static const char* kThumbFragment = R"(
+struct Uniforms {
+    meta: vec4f,
+    triggers_lo: vec4u,
+    triggers_hi: vec4u,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VertexOutput {
+    let fs = fullscreenTriangle(vertexIndex, true);
+    var out: VertexOutput;
+    out.position = fs.position;
+    out.uv = fs.uv;
+    return out;
+}
+
+fn get_trigger(drum: i32, step: i32) -> bool {
+    var mask: u32;
+    if (drum < 4) {
+        mask = uniforms.triggers_lo[drum];
+    } else {
+        mask = uniforms.triggers_hi[drum - 4];
+    }
+    return (mask & (1u << u32(step))) != 0u;
+}
+
+fn drum_color(drum: i32) -> vec3f {
+    switch(drum) {
+        case 0: { return vec3f(220.0, 80.0, 80.0); }    // kick — red
+        case 1: { return vec3f(220.0, 190.0, 60.0); }   // snare — gold
+        case 2: { return vec3f(60.0, 200.0, 180.0); }   // hat — teal
+        case 3: { return vec3f(80.0, 130.0, 220.0); }   // oh — blue
+        case 4: { return vec3f(160.0, 90.0, 200.0); }   // clap — purple
+        case 5: { return vec3f(80.0, 200.0, 100.0); }   // tom — green
+        default: { return vec3f(100.0, 100.0, 100.0); }
+    }
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4f {
+    let uv = input.uv;
+    let bg = vec4f(18.0/255.0, 20.0/255.0, 23.0/255.0, 230.0/255.0);
+
+    let num_steps = i32(uniforms.meta.x);
+    let cur_step = i32(uniforms.meta.y);
+
+    let pad = 2.0 / 64.0;
+    let grid_x = (uv.x - pad) / (1.0 - 2.0 * pad);
+    let grid_y = (uv.y - pad) / (1.0 - 2.0 * pad);
+
+    if (grid_x < 0.0 || grid_x > 1.0 || grid_y < 0.0 || grid_y > 1.0) {
+        return bg;
+    }
+
+    let col_f = grid_x * 16.0;
+    let row_f = grid_y * 6.0;
+    let col = i32(floor(col_f));
+    let row = i32(floor(row_f));
+    if (col >= 16 || row >= 6) { return bg; }
+
+    var result = bg;
+
+    // Current step column highlight
+    if (col == cur_step && col < num_steps) {
+        result = vec4f(
+            min(1.0, bg.r + 25.0/255.0),
+            min(1.0, bg.g + 30.0/255.0),
+            min(1.0, bg.b + 35.0/255.0),
+            bg.a
+        );
+    }
+
+    // Active cell dot (with inset)
+    let inset = 1.5 / 64.0 * 16.0;  // ~1.5px inset relative to cell
+    let cell_x = fract(col_f);
+    let cell_y = fract(row_f);
+    let in_dot = cell_x > (inset / 16.0 * 16.0) && cell_x < (1.0 - inset / 16.0 * 16.0) &&
+                 cell_y > (inset / 6.0 * 6.0) && cell_y < (1.0 - inset / 6.0 * 6.0);
+
+    if (in_dot && get_trigger(row, col)) {
+        let c = drum_color(row);
+        var alpha = 230.0;
+        if (col >= num_steps) { alpha = 60.0; }
+        result = vec4f(c / 255.0, alpha / 255.0);
+    }
+
+    return result;
+}
+)";
+
+        static constexpr uint64_t kUniformSize = sizeof(float) * 4 + sizeof(uint32_t) * 8;
+        thumb_shader_ = vivid::thumbnail::create_shader(ctx->device, kThumbFragment, "DrumSeq Thumb Shader");
+        thumb_uniform_buf_ =
+            vivid::thumbnail::create_uniform_buffer(ctx->device, kUniformSize, "DrumSeq Thumb Uniforms");
+        thumb_bind_layout_ =
+            vivid::thumbnail::create_uniform_bind_layout(ctx->device, kUniformSize, "DrumSeq Thumb BGL");
+        thumb_pipe_layout_ =
+            vivid::thumbnail::create_pipeline_layout(ctx->device, thumb_bind_layout_, "DrumSeq Thumb Layout");
+        thumb_bind_group_ = vivid::thumbnail::create_uniform_bind_group(
+            ctx->device, thumb_bind_layout_, thumb_uniform_buf_, kUniformSize, "DrumSeq Thumb BG");
+        thumb_pipeline_ = vivid::thumbnail::create_pipeline(
+            ctx->device, thumb_shader_, thumb_pipe_layout_, ctx->thumbnail_format, "DrumSeq Thumb Pipeline");
+        thumb_pipeline_format_ = ctx->thumbnail_format;
+    }
 };
 
 VIVID_REGISTER(DrumSequencer)
