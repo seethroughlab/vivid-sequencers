@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "id": "drum_pattern",
+    "title": "Drum Pattern",
+    "description": "A classic four-on-the-floor drum pattern with kick, snare, and hi-hat driven by the DrumSequencer. The thumbnail shows the colored 6x16 trigger grid, and the inspector provides an interactive pattern editor.",
+    "tags": ["drums", "sequencer", "thumbnail-showcase", "demo"],
+    "difficulty": "beginner",
+    "domains": ["audio"],
+    "requires_packages": ["vivid-sequencers"]
+  },
+  "nodes": {
+    "clock1": {
+      "type": "Clock",
+      "params": { "bpm": 120.0 }
+    },
+    "drums1": {
+      "type": "DrumSequencer",
+      "params": {
+        "steps": 16,
+        "swing": 0.0,
+        "kick_note": 36, "snare_note": 38, "hat_note": 42,
+        "oh_note": 46, "clap_note": 39, "tom_note": 45,
+        "kick_0": 1.0, "kick_4": 1.0, "kick_8": 1.0, "kick_12": 1.0,
+        "snare_4": 1.0, "snare_12": 1.0,
+        "hat_0": 0.8, "hat_2": 0.6, "hat_4": 0.8, "hat_6": 0.6,
+        "hat_8": 0.8, "hat_10": 0.6, "hat_12": 0.8, "hat_14": 0.6,
+        "oh_7": 0.7, "oh_15": 0.7
+      }
+    },
+    "synth1": {
+      "type": "WavetableSynth",
+      "params": {
+        "wavetable": 0,
+        "position": 0.2,
+        "attack": 0.001,
+        "decay": 0.15,
+        "sustain": 0.1,
+        "release": 0.1,
+        "amplitude": 0.35,
+        "filter_cutoff": 5000.0,
+        "filter_resonance": 0.2
+      }
+    },
+    "out1": { "type": "audio_out", "params": {} }
+  },
+  "connections": [
+    { "from": "clock1/beat_phase", "to": "drums1/beat_phase" },
+    { "from": "drums1/notes",      "to": "synth1/notes" },
+    { "from": "drums1/velocities", "to": "synth1/velocities" },
+    { "from": "drums1/gates",      "to": "synth1/gates" },
+    { "from": "synth1/output",     "to": "out1/input" }
+  ]
+}

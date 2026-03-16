@@ -1,0 +1,83 @@
+{
+  "meta": {
+    "id": "arp_chord_prog",
+    "title": "Arpeggiator + Chord Progression",
+    "description": "A ii-V-I-vi chord progression in C major arpeggiated upward with varied velocities, through a low-pass filter. The Arpeggiator thumbnail shows velocity bars with warm/cool transpose coloring, and the ChordProgression thumbnail shows a circle-of-fifths visualization.",
+    "tags": ["arpeggiator", "chords", "progression", "sequencer", "demo"],
+    "difficulty": "intermediate",
+    "domains": ["audio", "control"],
+    "requires_packages": ["vivid-sequencers"]
+  },
+  "nodes": {
+    "clock1": {
+      "type": "Clock",
+      "params": { "bpm": 110.0 }
+    },
+    "chords1": {
+      "type": "ChordProgression",
+      "params": {
+        "steps": 4,
+        "key_root": 0,
+        "mode": 0,
+        "octave": 4,
+        "beats_per_step": 4,
+        "gate_length": 0.95,
+        "velocity": 0.8,
+        "degree_0": 1, "voicing_0": 0, "ext_0": 1,
+        "degree_1": 4, "voicing_1": 0, "ext_1": 1,
+        "degree_2": 0, "voicing_2": 0, "ext_2": 1,
+        "degree_3": 5, "voicing_3": 1, "ext_3": 0
+      }
+    },
+    "arp1": {
+      "type": "Arpeggiator",
+      "params": {
+        "mode": 0,
+        "octaves": 2,
+        "rate": 3,
+        "gate_length": 0.5,
+        "swing": 0.0,
+        "latch": false,
+        "mod_steps": 4,
+        "vel_0": 1.0, "vel_1": 0.5, "vel_2": 0.8, "vel_3": 0.3,
+        "tr_0": 0, "tr_1": 12, "tr_2": 0, "tr_3": -12
+      }
+    },
+    "synth1": {
+      "type": "WavetableSynth",
+      "params": {
+        "wavetable": 1,
+        "position": 0.35,
+        "attack": 0.01,
+        "decay": 0.2,
+        "sustain": 0.3,
+        "release": 0.25,
+        "amplitude": 0.2,
+        "filter_cutoff": 5000.0,
+        "filter_resonance": 0.3
+      }
+    },
+    "filter1": {
+      "type": "Filter",
+      "params": { "cutoff": 3000.0, "resonance": 1.5, "mode": 0 }
+    },
+    "gain1": {
+      "type": "Gain",
+      "params": { "gain": 0.7 }
+    },
+    "out1": { "type": "audio_out", "params": {} }
+  },
+  "connections": [
+    { "from": "clock1/beat_phase",  "to": "chords1/beat_phase" },
+    { "from": "clock1/beat_phase",  "to": "arp1/beat_phase" },
+    { "from": "chords1/notes",      "to": "arp1/notes" },
+    { "from": "chords1/velocities", "to": "arp1/velocities" },
+    { "from": "chords1/gates",      "to": "arp1/gates" },
+    { "from": "arp1/notes",         "to": "synth1/notes" },
+    { "from": "arp1/velocities",    "to": "synth1/velocities" },
+    { "from": "arp1/gates",         "to": "synth1/gates" },
+    { "from": "synth1/output",      "to": "filter1/input" },
+    { "from": "filter1/output",     "to": "gain1/input" },
+    { "from": "gain1/output",       "to": "out1/input" }
+  ]
+}
