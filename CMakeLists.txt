@@ -136,4 +136,28 @@ if(VIVID_PACKAGE_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_tests_properties(test_pattern_algebra PROPERTIES
     ENVIRONMENT "VIVID_CORE_PLUGIN_DIR=${VIVID_BUILD_DIR}")
+
+  add_executable(test_operator_smoke
+    tests/test_operator_smoke.cpp
+    ${VIVID_SRC_DIR}/src/runtime/operator_loader.cpp
+    ${VIVID_SRC_DIR}/src/runtime/operator_registry.cpp
+    ${VIVID_SRC_DIR}/src/runtime/port_type_registry.cpp
+    ${VIVID_SRC_DIR}/src/runtime/wgsl_header_parser.cpp
+  )
+  target_include_directories(test_operator_smoke PRIVATE
+    ${VIVID_SRC_DIR}/src
+    ${VIVID_SRC_DIR}/deps/yyjson
+    ${CMAKE_SOURCE_DIR}/tests
+  )
+  target_link_libraries(test_operator_smoke PRIVATE vivid_operator_api webgpu)
+  if(YYJSON_LIB)
+    target_link_libraries(test_operator_smoke PRIVATE ${YYJSON_LIB})
+  else()
+    target_link_libraries(test_operator_smoke PRIVATE yyjson)
+  endif()
+  add_test(NAME test_operator_smoke
+    COMMAND test_operator_smoke
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(test_operator_smoke PROPERTIES
+    ENVIRONMENT "VIVID_CORE_PLUGIN_DIR=${VIVID_BUILD_DIR}")
 endif()

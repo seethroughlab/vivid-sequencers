@@ -193,8 +193,8 @@ struct NotePattern : vivid::AudioOperatorBase {
             ctx->custom_outputs[0] = &midi_buf_;
         }
 
-        // Scalar fallback: first note
-        if (chord_size > 0) {
+        // Scalar fallback: first note (only if FLOAT outputs exist)
+        if (chord_size > 0 && ctx->output_float_values) {
             ctx->output_float_values[0] = static_cast<float>(root + oct * 12 + intervals[0]);
             ctx->output_float_values[1] = vel;
             ctx->output_float_values[2] = gate_val;
