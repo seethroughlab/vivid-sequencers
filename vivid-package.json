@@ -16,7 +16,10 @@
     "arpeggiator",
     "chord_progression",
     "state_machine",
-    "tracker"
+    "tracker",
+    "euclidean",
+    "pat_transform",
+    "phase_to_midi"
   ],
   "tests": {
     "graphs": [

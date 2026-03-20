@@ -70,6 +70,7 @@ if(NOT _wgpu_lib_dir STREQUAL "")
   endif()
 endif()
 set(VIVID_SEQUENCER_OPS
+  sequencer
   drum_sequencer
   pattern_seq
   note_pattern
@@ -78,6 +79,9 @@ set(VIVID_SEQUENCER_OPS
   chord_progression
   state_machine
   tracker
+  euclidean
+  pat_transform
+  phase_to_midi
 )
 
 foreach(name IN LISTS VIVID_SEQUENCER_OPS)
