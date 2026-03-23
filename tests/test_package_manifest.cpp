@@ -24,7 +24,14 @@ int main() {
         "\"note_duration\"",
         "\"arpeggiator\"",
         "\"chord_progression\"",
-        "\"state_machine\""
+        "\"state_machine\"",
+        "\"tracker\"",
+        "\"euclidean\"",
+        "\"pat_transform\"",
+        "\"phase_to_midi\"",
+        "\"tests/test_pattern_algebra.cpp\"",
+        "\"tests/test_audio_operator_contracts.cpp\"",
+        "\"tests/test_tracker_contract.cpp\""
     };
 
     for (const auto& needle : required) {

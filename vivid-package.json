@@ -31,7 +31,10 @@
     "cpp": [
       "tests/test_package_manifest.cpp",
       "tests/test_arpeggiator_patterns.cpp",
-      "tests/test_state_machine.cpp"
+      "tests/test_state_machine.cpp",
+      "tests/test_pattern_algebra.cpp",
+      "tests/test_audio_operator_contracts.cpp",
+      "tests/test_tracker_contract.cpp"
     ]
   }
 }

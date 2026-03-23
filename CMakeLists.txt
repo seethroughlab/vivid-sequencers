@@ -11,7 +11,13 @@ if(NOT DEFINED VIVID_BUILD_DIR)
   set(VIVID_BUILD_DIR "${VIVID_SRC_DIR}/build")
 endif()
 if(NOT DEFINED VIVID_PLUGIN_SUFFIX)
-  set(VIVID_PLUGIN_SUFFIX .dylib)
+  if(APPLE)
+    set(VIVID_PLUGIN_SUFFIX .dylib)
+  elseif(WIN32)
+    set(VIVID_PLUGIN_SUFFIX .dll)
+  else()
+    set(VIVID_PLUGIN_SUFFIX .so)
+  endif()
 endif()
 
 option(VIVID_PACKAGE_BUILD_TESTS "Build vivid-sequencers package tests" OFF)
@@ -102,6 +108,13 @@ target_compile_features(test_package_manifest PRIVATE cxx_std_17)
 if(VIVID_PACKAGE_BUILD_TESTS)
   enable_testing()
 
+  set(VIVID_PACKAGE_RUNTIME_TEST_SOURCES
+    ${VIVID_SRC_DIR}/src/runtime/operator_loader.cpp
+    ${VIVID_SRC_DIR}/src/runtime/operator_registry.cpp
+    ${VIVID_SRC_DIR}/src/runtime/port_type_registry.cpp
+    ${VIVID_SRC_DIR}/src/runtime/wgsl_header_parser.cpp
+  )
+
   add_executable(test_arpeggiator_patterns tests/test_arpeggiator_patterns.cpp)
   target_compile_features(test_arpeggiator_patterns PRIVATE cxx_std_17)
   add_test(NAME test_arpeggiator_patterns COMMAND test_arpeggiator_patterns)
@@ -113,10 +126,7 @@ if(VIVID_PACKAGE_BUILD_TESTS)
 
   add_executable(test_pattern_algebra
     tests/test_pattern_algebra.cpp
-    ${VIVID_SRC_DIR}/src/runtime/operator_loader.cpp
-    ${VIVID_SRC_DIR}/src/runtime/operator_registry.cpp
-    ${VIVID_SRC_DIR}/src/runtime/port_type_registry.cpp
-    ${VIVID_SRC_DIR}/src/runtime/wgsl_header_parser.cpp
+    ${VIVID_PACKAGE_RUNTIME_TEST_SOURCES}
     ${VIVID_SRC_DIR}/src/runtime/graph.cpp
     ${VIVID_SRC_DIR}/src/runtime/scheduler.cpp
   )
@@ -143,10 +153,7 @@ if(VIVID_PACKAGE_BUILD_TESTS)
 
   add_executable(test_operator_smoke
     tests/test_operator_smoke.cpp
-    ${VIVID_SRC_DIR}/src/runtime/operator_loader.cpp
-    ${VIVID_SRC_DIR}/src/runtime/operator_registry.cpp
-    ${VIVID_SRC_DIR}/src/runtime/port_type_registry.cpp
-    ${VIVID_SRC_DIR}/src/runtime/wgsl_header_parser.cpp
+    ${VIVID_PACKAGE_RUNTIME_TEST_SOURCES}
   )
   target_include_directories(test_operator_smoke PRIVATE
     ${VIVID_SRC_DIR}/src
@@ -164,4 +171,42 @@ if(VIVID_PACKAGE_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_tests_properties(test_operator_smoke PROPERTIES
     ENVIRONMENT "VIVID_CORE_PLUGIN_DIR=${VIVID_BUILD_DIR}")
+
+  add_executable(test_audio_operator_contracts
+    tests/test_audio_operator_contracts.cpp
+    ${VIVID_PACKAGE_RUNTIME_TEST_SOURCES}
+  )
+  target_include_directories(test_audio_operator_contracts PRIVATE
+    ${VIVID_SRC_DIR}/src
+    ${VIVID_SRC_DIR}/deps/yyjson
+    ${CMAKE_SOURCE_DIR}/tests
+  )
+  target_link_libraries(test_audio_operator_contracts PRIVATE vivid_operator_api webgpu)
+  if(YYJSON_LIB)
+    target_link_libraries(test_audio_operator_contracts PRIVATE ${YYJSON_LIB})
+  else()
+    target_link_libraries(test_audio_operator_contracts PRIVATE yyjson)
+  endif()
+  add_test(NAME test_audio_operator_contracts
+    COMMAND test_audio_operator_contracts
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+  add_executable(test_tracker_contract
+    tests/test_tracker_contract.cpp
+    ${VIVID_PACKAGE_RUNTIME_TEST_SOURCES}
+  )
+  target_include_directories(test_tracker_contract PRIVATE
+    ${VIVID_SRC_DIR}/src
+    ${VIVID_SRC_DIR}/deps/yyjson
+    ${CMAKE_SOURCE_DIR}/tests
+  )
+  target_link_libraries(test_tracker_contract PRIVATE vivid_operator_api webgpu)
+  if(YYJSON_LIB)
+    target_link_libraries(test_tracker_contract PRIVATE ${YYJSON_LIB})
+  else()
+    target_link_libraries(test_tracker_contract PRIVATE yyjson)
+  endif()
+  add_test(NAME test_tracker_contract
+    COMMAND test_tracker_contract
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()

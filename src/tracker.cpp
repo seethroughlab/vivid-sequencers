@@ -184,6 +184,8 @@ struct Tracker : vivid::AudioOperatorBase {
             current_row_ = 0;
             current_tick_ = 0;
             beat_count_ = 0;
+            prev_global_tick_ = static_cast<int>(std::floor(
+                beat_phase * kMultipliers[r] * static_cast<float>(spd)));
             prev_phase_ = beat_phase;
             for (auto& ch : channels_) {
                 ch = tracker::ChannelState{};
@@ -240,9 +242,9 @@ struct Tracker : vivid::AudioOperatorBase {
         int pat_idx = 0;
         if (current_order_ < song_.arrangement_length)
             pat_idx = song_.arrangement[current_order_];
-        ctx->output_float_values[3] = static_cast<float>(current_row_);
-        ctx->output_float_values[4] = static_cast<float>(pat_idx);
-        ctx->output_float_values[5] = static_cast<float>(current_order_);
+        ctx->output_float_values[0] = static_cast<float>(current_row_);
+        ctx->output_float_values[1] = static_cast<float>(pat_idx);
+        ctx->output_float_values[2] = static_cast<float>(current_order_);
 
         // MIDI output
         if (ctx->custom_outputs && ctx->custom_output_count > 0) {
@@ -866,7 +868,7 @@ private:
 
         static const char* kThumbFragment = R"(
 struct Uniforms {
-    meta: vec4f,
+    info: vec4f,
     activity_lo: vec4u,
     activity_hi: vec4u,
 };
@@ -916,9 +918,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
     let uv = input.uv;
     let bg = vec4f(18.0/255.0, 20.0/255.0, 23.0/255.0, 230.0/255.0);
 
-    let num_rows = i32(uniforms.meta.x);
-    let cur_row = i32(uniforms.meta.y);
-    let num_ch = max(i32(uniforms.meta.z), 1);
+    let num_rows = i32(uniforms.info.x);
+    let cur_row = i32(uniforms.info.y);
+    let num_ch = max(i32(uniforms.info.z), 1);
 
     if (num_rows <= 0) { return bg; }
 
@@ -969,6 +971,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4f {
             ctx->device, thumb_bind_layout_, thumb_uniform_buf_, kUniformSize, "Tracker Thumb BG");
         thumb_pipeline_ = vivid::thumbnail::create_pipeline(
             ctx->device, thumb_shader_, thumb_pipe_layout_, ctx->thumbnail_format, "Tracker Thumb Pipeline");
+        if (!thumb_shader_ || !thumb_uniform_buf_ || !thumb_bind_layout_ || !thumb_pipe_layout_
+            || !thumb_bind_group_ || !thumb_pipeline_) {
+            vivid::gpu::release(thumb_pipeline_);
+            vivid::gpu::release(thumb_bind_group_);
+            vivid::gpu::release(thumb_bind_layout_);
+            vivid::gpu::release(thumb_uniform_buf_);
+            vivid::gpu::release(thumb_shader_);
+            vivid::gpu::release(thumb_pipe_layout_);
+            thumb_pipeline_format_ = WGPUTextureFormat_Undefined;
+            return;
+        }
         thumb_pipeline_format_ = ctx->thumbnail_format;
     }
 

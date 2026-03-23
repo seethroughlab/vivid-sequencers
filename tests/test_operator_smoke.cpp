@@ -1,4 +1,5 @@
 #include "audio_op_harness.h"
+#include "plugin_test_utils.h"
 #include "runtime/operator_registry.h"
 #include <cstdio>
 #include <cstdlib>
@@ -7,39 +8,48 @@
 
 static int failures = 0;
 
+struct ExpectedPlugin {
+    const char* stem;
+    const char* type_name;
+};
+
 int main() {
+    namespace vstest = vivid_sequencers::test;
+
     std::string staging = "./.test_operator_smoke_staging";
     std::filesystem::create_directories(staging);
 
     const char* core_plugin_dir_env = std::getenv("VIVID_CORE_PLUGIN_DIR");
     std::string core_plugin_dir = core_plugin_dir_env ? core_plugin_dir_env : ".";
 
-    // Copy all sequencer package operators
-    const char* package_ops[] = {
-        "drum_sequencer", "pattern_seq", "note_pattern", "note_duration",
-        "arpeggiator", "chord_progression", "state_machine", "tracker",
+    const ExpectedPlugin package_ops[] = {
+        {"sequencer", "Sequencer"},
+        {"drum_sequencer", "DrumSequencer"},
+        {"pattern_seq", "PatternSeq"},
+        {"note_pattern", "NotePattern"},
+        {"note_duration", "NoteDuration"},
+        {"arpeggiator", "Arpeggiator"},
+        {"chord_progression", "ChordProgression"},
+        {"state_machine", "StateMachine"},
+        {"tracker", "Tracker"},
+        {"euclidean", "Euclidean"},
+        {"pat_transform", "PatTransform"},
+        {"phase_to_midi", "PhaseToMidi"},
     };
-    for (const char* name : package_ops) {
-        std::string src = std::string(".") + "/" + name + ".dylib";
-        std::string dst = staging + "/" + name + ".dylib";
+    for (const auto& plugin : package_ops) {
         std::error_code ec;
-        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
+        vstest::copy_plugin_if_exists(".", staging, plugin.stem, ec);
         if (ec) {
-            std::fprintf(stderr, "  SKIP: %s (not found: %s)\n", name, ec.message().c_str());
+            std::fprintf(stderr, "  SKIP: %s (not found: %s)\n", plugin.stem, ec.message().c_str());
         }
     }
 
-    // Copy core operators that might be available
     const char* core_ops[] = {
-        "euclidean", "stack", "alternate", "pat_transform",
-        "spread_source_op", "clock",
+        "stack", "alternate", "spread_source_op", "clock",
     };
     for (const char* name : core_ops) {
-        std::string src = core_plugin_dir + "/" + name + ".dylib";
-        std::string dst = staging + "/" + name + ".dylib";
         std::error_code ec;
-        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
-        // Silently skip missing core ops — this test focuses on package operators
+        vstest::copy_plugin_if_exists(core_plugin_dir, staging, name, ec);
     }
 
     vivid::OperatorRegistry registry;
@@ -47,6 +57,13 @@ int main() {
         std::fprintf(stderr, "FAIL: registry.scan() failed\n");
         std::filesystem::remove_all(staging);
         return 1;
+    }
+
+    for (const auto& plugin : package_ops) {
+        if (!registry.find(plugin.type_name)) {
+            std::fprintf(stderr, "  FAIL: %s — package plugin did not load\n", plugin.stem);
+            ++failures;
+        }
     }
 
     auto names = registry.type_names();

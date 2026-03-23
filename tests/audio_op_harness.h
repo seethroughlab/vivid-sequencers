@@ -2,6 +2,7 @@
 
 #include "runtime/operator_registry.h"
 #include <cstring>
+#include <string>
 #include <vector>
 
 struct AudioOpHarness {
@@ -17,6 +18,8 @@ struct AudioOpHarness {
     std::vector<std::vector<float>> output_spread_storage;
     std::vector<void*> custom_inputs;
     std::vector<void*> custom_outputs;
+    std::vector<std::string> file_params;
+    std::vector<const char*> file_param_ptrs;
 
     explicit AudioOpHarness(vivid::OperatorLoader* in_loader, uint32_t spread_capacity = 32)
         : loader(in_loader) {
@@ -70,6 +73,28 @@ struct AudioOpHarness {
 
         custom_inputs.assign(custom_input_count, nullptr);
         custom_outputs.assign(custom_output_count, nullptr);
+
+        uint32_t file_param_count = 0;
+        for (uint32_t i = 0; i < desc->param_count; ++i) {
+            if (desc->params[i].type == VIVID_PARAM_FILE ||
+                desc->params[i].type == VIVID_PARAM_TEXT) {
+                ++file_param_count;
+            }
+        }
+        file_params.resize(file_param_count);
+        file_param_ptrs.resize(file_param_count, nullptr);
+        uint32_t file_idx = 0;
+        for (uint32_t i = 0; i < desc->param_count; ++i) {
+            if (desc->params[i].type == VIVID_PARAM_FILE ||
+                desc->params[i].type == VIVID_PARAM_TEXT) {
+                const char* def = desc->params[i].default_string
+                    ? desc->params[i].default_string
+                    : "";
+                file_params[file_idx] = def;
+                file_param_ptrs[file_idx] = file_params[file_idx].c_str();
+                ++file_idx;
+            }
+        }
     }
 
     ~AudioOpHarness() {
@@ -97,6 +122,30 @@ struct AudioOpHarness {
         }
     }
 
+    int string_param_index(const char* name) const {
+        uint32_t file_idx = 0;
+        for (uint32_t i = 0; i < desc->param_count; ++i) {
+            if (desc->params[i].type != VIVID_PARAM_FILE &&
+                desc->params[i].type != VIVID_PARAM_TEXT) {
+                continue;
+            }
+            if (std::strcmp(desc->params[i].name, name) == 0) {
+                return static_cast<int>(file_idx);
+            }
+            ++file_idx;
+        }
+        return -1;
+    }
+
+    void set_string_param(const char* name, const std::string& value) {
+        int idx = string_param_index(name);
+        if (idx >= 0) {
+            file_params[static_cast<size_t>(idx)] = value;
+            file_param_ptrs[static_cast<size_t>(idx)] =
+                file_params[static_cast<size_t>(idx)].c_str();
+        }
+    }
+
     void process(uint64_t frame = 0) {
         VividAudioContext ctx{};
         ctx.time = 0.0;
@@ -118,8 +167,8 @@ struct AudioOpHarness {
         ctx.output_float_values = output_floats.empty() ? nullptr : output_floats.data();
         ctx.custom_outputs = custom_outputs.empty() ? nullptr : custom_outputs.data();
         ctx.custom_output_count = static_cast<uint32_t>(custom_outputs.size());
-        ctx.file_param_values = nullptr;
-        ctx.file_param_count = 0;
+        ctx.file_param_values = file_param_ptrs.empty() ? nullptr : file_param_ptrs.data();
+        ctx.file_param_count = static_cast<uint32_t>(file_param_ptrs.size());
         ctx.shared_handles = nullptr;
         loader->process_audio(instance, &ctx);
     }

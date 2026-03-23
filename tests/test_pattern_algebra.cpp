@@ -1,4 +1,5 @@
 #include "audio_op_harness.h"
+#include "plugin_test_utils.h"
 #include "runtime/graph.h"
 #include "runtime/scheduler.h"
 #include <cmath>
@@ -162,10 +163,21 @@ static void test_sequencer(vivid::OperatorRegistry& registry) {
     {
         AudioOpHarness op(loader);
         op.set_param("steps", 4.0f);
-        op.set_param("val_0", 10.0f);
-        op.set_param("val_1", 20.0f);
-        op.set_param("val_2", 30.0f);
-        op.set_param("val_3", 40.0f);
+        op.input_spreads[0].length = 4;
+        op.input_spreads[0].data[0] = 10.0f;
+        op.input_spreads[0].data[1] = 20.0f;
+        op.input_spreads[0].data[2] = 30.0f;
+        op.input_spreads[0].data[3] = 40.0f;
+        op.input_spreads[1].length = 4;
+        op.input_spreads[1].data[0] = 1.0f;
+        op.input_spreads[1].data[1] = 1.0f;
+        op.input_spreads[1].data[2] = 1.0f;
+        op.input_spreads[1].data[3] = 1.0f;
+        op.input_spreads[2].length = 4;
+        op.input_spreads[2].data[0] = 1.0f;
+        op.input_spreads[2].data[1] = 1.0f;
+        op.input_spreads[2].data[2] = 1.0f;
+        op.input_spreads[2].data[3] = 1.0f;
 
         op.input_floats[0] = 0.00f;
         op.input_floats[1] = 0.0f;
@@ -188,11 +200,24 @@ static void test_sequencer(vivid::OperatorRegistry& registry) {
     {
         AudioOpHarness op(loader);
         op.set_param("steps", 4.0f);
-        op.set_param("val_0", 10.0f);
-        op.set_param("val_1", 20.0f);
-        op.set_param("prob_1", 0.0f);
+        op.input_spreads[0].length = 4;
+        op.input_spreads[0].data[0] = 10.0f;
+        op.input_spreads[0].data[1] = 20.0f;
+        op.input_spreads[0].data[2] = 30.0f;
+        op.input_spreads[0].data[3] = 40.0f;
+        op.input_spreads[1].length = 4;
+        op.input_spreads[1].data[0] = 1.0f;
+        op.input_spreads[1].data[1] = 0.0f;
+        op.input_spreads[1].data[2] = 1.0f;
+        op.input_spreads[1].data[3] = 1.0f;
+        op.input_spreads[2].length = 4;
+        op.input_spreads[2].data[0] = 1.0f;
+        op.input_spreads[2].data[1] = 1.0f;
+        op.input_spreads[2].data[2] = 1.0f;
+        op.input_spreads[2].data[3] = 1.0f;
 
         op.input_floats[0] = 0.00f;
+        op.input_floats[1] = 0.0f;
         op.process(0);
         op.input_floats[0] = 0.30f;
         op.process(1);
@@ -205,10 +230,15 @@ static void test_sequencer(vivid::OperatorRegistry& registry) {
     {
         AudioOpHarness op(loader);
         op.set_param("steps", 1.0f);
-        op.set_param("val_0", 11.0f);
-        op.set_param("ratchet_0", 4.0f);
+        op.input_spreads[0].length = 1;
+        op.input_spreads[0].data[0] = 11.0f;
+        op.input_spreads[1].length = 1;
+        op.input_spreads[1].data[0] = 1.0f;
+        op.input_spreads[2].length = 1;
+        op.input_spreads[2].data[0] = 4.0f;
 
         op.input_floats[0] = 0.01f;
+        op.input_floats[1] = 0.0f;
         op.process(0);
         check_float(op.output_floats[2], 1.0f, "ratchet trigger bucket 0");
 
@@ -481,26 +511,28 @@ static void test_integration(vivid::OperatorRegistry& registry) {
 }
 
 int main() {
+    namespace vstest = vivid_sequencers::test;
+
     std::string staging = "./.test_pattern_algebra_staging";
     std::filesystem::create_directories(staging);
 
     const char* core_plugin_dir_env = std::getenv("VIVID_CORE_PLUGIN_DIR");
     std::string core_plugin_dir = core_plugin_dir_env ? core_plugin_dir_env : ".";
 
-    auto copy_op_from = [&](const std::string& src_dir, const char* name) {
-        std::string src = src_dir + "/" + std::string(name) + ".dylib";
-        std::string dst = staging + "/" + std::string(name) + ".dylib";
-        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
-    };
-
-    copy_op_from(".", "pattern_seq");
-    copy_op_from(".", "sequencer");
-    copy_op_from(core_plugin_dir, "euclidean");
-    copy_op_from(core_plugin_dir, "stack");
-    copy_op_from(core_plugin_dir, "alternate");
-    copy_op_from(core_plugin_dir, "pat_transform");
-    copy_op_from(core_plugin_dir, "spread_source_op");
-    copy_op_from(core_plugin_dir, "clock");
+    try {
+        vstest::copy_plugin_or_throw(".", staging, "pattern_seq");
+        vstest::copy_plugin_or_throw(".", staging, "sequencer");
+        vstest::copy_plugin_or_throw(".", staging, "euclidean");
+        vstest::copy_plugin_or_throw(".", staging, "pat_transform");
+        vstest::copy_plugin_or_throw(core_plugin_dir, staging, "stack");
+        vstest::copy_plugin_or_throw(core_plugin_dir, staging, "alternate");
+        vstest::copy_plugin_or_throw(core_plugin_dir, staging, "spread_source_op");
+        vstest::copy_plugin_or_throw(core_plugin_dir, staging, "clock");
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "FAIL: %s\n", e.what());
+        std::filesystem::remove_all(staging);
+        return 1;
+    }
 
     vivid::OperatorRegistry registry;
     check(registry.scan(staging.c_str()), "registry.scan() succeeds");
