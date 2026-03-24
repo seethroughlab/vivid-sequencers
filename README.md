@@ -1,6 +1,8 @@
-# vivid-sequencers
+# vivid-sequencers (Archived)
 
-`vivid-sequencers` is a Vivid package library that provides sequencing control operators:
+> **These operators are now part of [Vivid core](https://github.com/seethroughlab/vivid).** This repository is archived and no longer maintained.
+
+`vivid-sequencers` was a Vivid package library that provided sequencing control operators:
 
 - `sequencer`
 - `drum_sequencer`
